@@ -1,12 +1,12 @@
 # Auto Caption Generator
 
-An advanced video captioning API that automatically generates and embeds captions into videos using OpenAI's Whisper model for transcription. Features word-level highlighting, multiple caption styles, and karaoke-style subtitles.
+An advanced video captioning API that automatically generates and embeds captions into videos using OpenAI's Whisper model for transcription. Features chunked subtitles, multiple styles, and modern visual options.
 
 ## Features
 
 - **Automatic Transcription**: Uses OpenAI Whisper for accurate speech-to-text conversion
-- **Word-Level Highlighting**: Highlights individual words as they are spoken (karaoke-style)
-- **Multiple Caption Styles**: 9 different visual styles for captions
+- **Chunked Subtitles**: For 'classic' and 'centered' styles, subtitles are split into 5-6 word groups for better readability
+- **Multiple Caption Styles**: Three distinct visual styles
 - **Customizable Parameters**: Font size, color, position, and background options
 - **Multi-language Support**: Supports transcription in multiple languages
 - **FastAPI-based REST API**: Modern, fast API with automatic documentation
@@ -42,29 +42,23 @@ The server will start at `http://localhost:8000`
 
 ## API Endpoints
 
-### 1. Generate Captions with Word Highlighting
+### 1. Generate Captions
 
 **Endpoint:** `POST /generate-captions/`
 
 **Parameters:**
 - `video`: Video file (MP4 format)
 - `language`: Language code (default: "en")
-- `style`: Caption style (default: "classic")
+- `style`: Caption style (default: "youtube")
 
 **Available Styles:**
-- `classic`: Traditional white text with black outline
-- `youtube`: YouTube-style with semi-transparent background
-- `minimal`: Clean, centered text with background
-- `rich`: Gold text with Impact font
-- `live`: Live streaming style
-- `bold_white_top`: Large white text at top
-- `bold_outline`: Bold text with thick outline
-- `modern_karaoke`: Large text with karaoke-style highlighting
-- `white_background`: Black text on solid white background for maximum readability
+- `youtube`: Bottom, white text, large font, semi-transparent black background, no border
+- `classic`: Bottom, white text, Arial, thin black border, no background, chunked to 5-6 words
+- `centered`: Center, bold white text, large font, semi-transparent black background, no border, chunked to 5-6 words
 
-### 2. Generate Modern Karaoke Subtitles
+### 2. Generate Live Karaoke-Style Subtitles
 
-**Endpoint:** `POST /generate-modern-karaoke-ffmpeg/`
+**Endpoint:** `POST /generate-live-subtitles/`
 
 **Parameters:**
 - `video`: Video file (MP4 format)
@@ -93,13 +87,35 @@ curl -X POST "http://localhost:8000/generate-captions/" \
      -H "Content-Type: multipart/form-data" \
      -F "video=@your_video.mp4" \
      -F "language=en" \
-     -F "style=white_background"
+     -F "style=classic"
 ```
 
-### Karaoke-Style Subtitles
+### Centered Chunked Subtitles
 
 ```bash
-curl -X POST "http://localhost:8000/generate-modern-karaoke-ffmpeg/" \
+curl -X POST "http://localhost:8000/generate-captions/" \
+     -H "accept: application/json" \
+     -H "Content-Type: multipart/form-data" \
+     -F "video=@your_video.mp4" \
+     -F "language=en" \
+     -F "style=centered"
+```
+
+### YouTube-Style Subtitles
+
+```bash
+curl -X POST "http://localhost:8000/generate-captions/" \
+     -H "accept: application/json" \
+     -H "Content-Type: multipart/form-data" \
+     -F "video=@your_video.mp4" \
+     -F "language=en" \
+     -F "style=youtube"
+```
+
+### Live Karaoke-Style Subtitles
+
+```bash
+curl -X POST "http://localhost:8000/generate-live-subtitles/" \
      -H "accept: application/json" \
      -H "Content-Type: multipart/form-data" \
      -F "video=@your_video.mp4" \
@@ -124,6 +140,7 @@ curl -X POST "http://localhost:8000/generate-modern-karaoke-ffmpeg/" \
 
 - The API automatically handles temporary file cleanup
 - Word-level timestamps are used for precise synchronization
-- Text wrapping is automatically applied to prevent overflow
-- Font fallbacks are implemented for cross-platform compatibility
-- The karaoke endpoint provides the most advanced word-level highlighting 
+- Subtitles for 'classic' and 'centered' are chunked for readability
+- The classic style has a thin black border for clarity
+- The centered style is bold, large, and highly visible
+- The YouTube style is large, bottom-aligned, and backgrounded for maximum readability 

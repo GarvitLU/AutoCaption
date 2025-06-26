@@ -34,123 +34,40 @@ model = whisper.load_model("base")
 
 # Update the SUBTITLE_PRESETS
 SUBTITLE_PRESETS = {
-    "classic": {
-        "font": "DejaVu-Sans",
-        "fontsize": 28,
-        "color": "white",
-        "highlight_color": "#00A5FF",  # Bright blue for highlighted word
-        "bg_color": None,
-        "position": ("center", "bottom"),
-        "method": "label",
-        "align": "center",
-        "stroke_color": "black",
-        "stroke_width": 2,
-        "spacing": 5
-    },
     "youtube": {
         "font": "DejaVu-Sans",
-        "fontsize": 32,
+        "fontsize": 48,
         "color": "white",
         "highlight_color": "#00A5FF",
         "bg_color": "rgba(0,0,0,0.7)",
         "position": ("center", "bottom"),
         "method": "label",
         "align": "center",
-        "stroke_color": "black",
-        "stroke_width": 2,
         "spacing": 5
     },
-    "minimal": {
-        "font": "Helvetica",
-        "fontsize": 28,
+    "classic": {
+        "font": "Arial",
+        "fontsize": 48,
+        "color": "white",
+        "highlight_color": "#00A5FF",
+        "bg_color": None,
+        "position": ("center", "bottom"),
+        "method": "label",
+        "align": "center",
+        "stroke_color": "black",
+        "stroke_width": 1,
+        "spacing": 5
+    },
+    "centered": {
+        "font": "Arial-Bold",
+        "fontsize": 48,
         "color": "white",
         "highlight_color": "#00A5FF",
         "bg_color": "rgba(0,0,0,0.7)",
         "position": ("center", "center"),
         "method": "label",
         "align": "center",
-        "stroke_color": "black",
-        "stroke_width": 2,
-        "spacing": 5
-    },
-    "rich": {
-        "font": "Impact",
-        "fontsize": 40,
-        "color": "#FFD700",  # Gold
-        "highlight_color": "#00A5FF",
-        "bg_color": None,
-        "position": ("center", "bottom"),
-        "method": "label",
-        "align": "center",
-        "stroke_color": "black",
-        "stroke_width": 2,
-        "spacing": 5
-    },
-    "live": {
-        "font": "DejaVu-Sans",
-        "fontsize": 32,
-        "color": "white",
-        "highlight_color": "#00A5FF",
-        "bg_color": None,
-        "position": ("center", "bottom"),
-        "method": "label",
-        "align": "center",
-        "stroke_color": "black",
-        "stroke_width": 2,
-        "spacing": 5
-    },
-    "bold_white_top": {
-        "font": "Impact",
-        "fontsize": 48,
-        "color": "white",
-        "highlight_color": "#00A5FF",
-        "bg_color": None,
-        "position": ("center", "top"),
-        "method": "label",
-        "align": "center",
-        "stroke_color": "black",
-        "stroke_width": 2,
-        "spacing": 5
-    },
-    "bold_outline": {
-        "font": "Arial-Bold",
-        "fontsize": 60,
-        "color": "white",
-        "highlight_color": "#00A5FF",
-        "bg_color": None,
-        "position": ("center", "bottom"),
-        "method": "label",
-        "align": "center",
-        "stroke_color": "black",
-        "stroke_width": 3,
-        "spacing": 5
-    },
-    "modern_karaoke": {
-        "font": "/Library/Fonts/Arial Bold.ttf",  # Use system bold font for macOS
-        "fontsize": 100,
-        "color": "white",
-        "highlight_color": "#00A5FF",
-        "stroke_color": "black",
-        "stroke_width": 6,
-        "position": ("center", "just_below_center"),
-        "bg_opacity": 0.5,  # semi-transparent background
-        "spacing": 6,
-        "method": "label",
-        "align": "center"
-    },
-    "white_background": {
-        "font": "DejaVu-Sans",
-        "fontsize": 32,
-        "color": "black",  # Black text on white background for maximum readability
-        "highlight_color": "#0066CC",  # Dark blue for highlighted word
-        "stroke_color": "black",
-        "stroke_width": 0,  # No stroke needed with white background
-        "position": ("center", "bottom"),
-        "method": "label",
-        "align": "center",
-        "spacing": 5,
-        "white_bg": True,  # Special flag to indicate white background style
-        "bg_padding": 20  # Padding around text for the white background
+        "spacing": 6
     }
 }
 
@@ -242,12 +159,35 @@ async def generate_captions(
         # Subtitle creation
         print("[INFO] Creating subtitle clips...")
         captions = []
-        if style == "live":
-            # Line-by-line real-time effect (show whole segment as soon as it starts)
-            for seg in result["segments"]:
-                text = seg["text"].strip()
-                start = seg["start"]
-                end = seg["end"]
+        def chunk_words(text, chunk_size=6):
+            words = text.split()
+            return [" ".join(words[i:i+chunk_size]) for i in range(0, len(words), chunk_size)]
+
+        for seg in result["segments"]:
+            text = seg["text"].strip()
+            start = seg["start"]
+            end = seg["end"]
+            if style in ["classic", "centered"]:
+                chunks = chunk_words(text, 6)
+                duration = (end - start) / max(1, len(chunks))
+                for i, chunk in enumerate(chunks):
+                    chunk_start = start + i * duration
+                    chunk_end = min(end, chunk_start + duration)
+                    font_size_try = font_size
+                    while font_size_try >= min_font_size:
+                        textclip_kwargs["fontsize"] = font_size_try
+                        try:
+                            txt_clip = TextClip(chunk, size=(max_width - 2 * pad, None), **textclip_kwargs)
+                        except Exception as e:
+                            raise HTTPException(status_code=500, detail=f"TextClip error: {str(e)} | kwargs: {textclip_kwargs}")
+                        if txt_clip.w <= (max_width - 2 * pad) and txt_clip.h <= max_height:
+                            break
+                        font_size_try -= 2
+                    position = get_position(txt_clip)
+                    txt_clip = txt_clip.set_position(position)
+                    txt_clip = txt_clip.set_start(chunk_start).set_end(chunk_end)
+                    captions.append(txt_clip)
+            else:
                 font_size_try = font_size
                 while font_size_try >= min_font_size:
                     textclip_kwargs["fontsize"] = font_size_try
@@ -258,49 +198,9 @@ async def generate_captions(
                     if txt_clip.w <= (max_width - 2 * pad) and txt_clip.h <= max_height:
                         break
                     font_size_try -= 2
-                # Only add background for youtube and minimal, not for rich
-                if style in ["youtube", "minimal"] and pad > 0:
-                    from moviepy.video.VideoClip import ColorClip
-                    bg = ColorClip(size=(txt_clip.w + 2 * pad, txt_clip.h + 2 * pad), color=(0, 0, 0)).set_opacity(0.7)
-                    txt_clip = txt_clip.set_position((pad, pad))
-                    txt_clip = CompositeVideoClip([bg, txt_clip], size=bg.size).set_duration(txt_clip.duration)
                 position = get_position(txt_clip)
                 txt_clip = txt_clip.set_position(position)
                 txt_clip = txt_clip.set_start(start).set_end(end)
-                captions.append(txt_clip)
-        else:
-            for seg in result["segments"]:
-                text = seg["text"].strip()
-                start_time = seg["start"]
-                end_time = seg["end"]
-                font_size_try = font_size
-                while font_size_try >= min_font_size:
-                    textclip_kwargs["fontsize"] = font_size_try
-                    try:
-                        txt_clip = TextClip(text, size=(max_width - 2 * pad, None), **textclip_kwargs)
-                    except Exception as e:
-                        raise HTTPException(status_code=500, detail=f"TextClip error: {str(e)} | kwargs: {textclip_kwargs}")
-                    if txt_clip.w <= (max_width - 2 * pad) and txt_clip.h <= max_height:
-                        break
-                    font_size_try -= 2
-                # Only add background for youtube and minimal, not for rich
-                if style in ["youtube", "minimal"] and pad > 0:
-                    from moviepy.video.VideoClip import ColorClip
-                    bg = ColorClip(size=(txt_clip.w + 2 * pad, txt_clip.h + 2 * pad), color=(0, 0, 0)).set_opacity(0.7)
-                    txt_clip = txt_clip.set_position((pad, pad))
-                    txt_clip = CompositeVideoClip([bg, txt_clip], size=bg.size).set_duration(txt_clip.duration)
-                # Only add shadow for styles that explicitly want it (not for rich)
-                if style_settings.get("shadow") and style != "rich":
-                    from moviepy.video.tools.drawing import color_gradient
-                    try:
-                        shadow = TextClip(text, fontsize=font_size_try, font=style_settings["font"], color="black", size=(max_width - 2 * pad, None), method="caption", align=style_settings.get("align", "center"))
-                    except Exception as e:
-                        raise HTTPException(status_code=500, detail=f"Shadow TextClip error: {str(e)} | kwargs: {textclip_kwargs}")
-                    shadow = shadow.set_position((2, 2)).set_opacity(0.5)
-                    txt_clip = CompositeVideoClip([shadow, txt_clip], size=txt_clip.size).set_duration(txt_clip.duration)
-                position = get_position(txt_clip)
-                txt_clip = txt_clip.set_position(position)
-                txt_clip = txt_clip.set_start(start_time).set_end(end_time)
                 captions.append(txt_clip)
         print(f"[INFO] Created {len(captions)} subtitle clips.")
         
@@ -439,13 +339,13 @@ def create_text_clip(text, style_settings, highlighted_word=None, video_width=19
     clip.mask = VideoClip(make_mask, duration=duration)
     return clip
 
-@app.post("/generate-modern-karaoke-ffmpeg/")
-async def generate_modern_karaoke_ffmpeg(
+@app.post("/generate-live-subtitles/")
+async def generate_live_subtitles(
     video: UploadFile = File(...),
     language: str = Form("en")
 ):
     """
-    Generate a video with modern karaoke subtitles (solid white background, black text, blue highlight) using MoviePy/PIL.
+    Generate a video with live karaoke-style subtitles (solid white background, black text, blue highlight) using MoviePy/PIL.
     """
     try:
         # Save uploaded video to temp file
