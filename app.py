@@ -13,7 +13,7 @@ os.environ["MAGICK_HOME"] = "/opt/homebrew/opt/imagemagick"  # Update this path 
 os.environ["PATH"] = f"{os.environ['MAGICK_HOME']}/bin:" + os.environ.get("PATH", "")
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.responses import FileResponse
-import whisper
+from openai import OpenAI
 import tempfile
 from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip
 from pydantic import BaseModel
@@ -26,11 +26,97 @@ import datetime
 import subprocess
 import json
 import csv
+from dotenv import load_dotenv
+import httpx
+import asyncio
+
+# Load environment variables
+load_dotenv()
 
 app = FastAPI(title="Auto Caption Generator")
 
-# Load Whisper model
-model = whisper.load_model("base")
+# Initialize OpenAI client
+openai_api_key = os.getenv("OPENAI_API_KEY")
+if not openai_api_key:
+    print("[WARNING] OPENAI_API_KEY not found in environment variables. Please set it in your .env file or environment.")
+    client = None
+else:
+    client = OpenAI(api_key=openai_api_key)
+
+# Function to transcribe using OpenAI Whisper API
+async def transcribe_with_openai(audio_file_path: str, language: str = "en"):
+    """Transcribe audio using OpenAI's Whisper API"""
+    if not client:
+        raise HTTPException(status_code=500, detail="OpenAI API key not configured")
+    
+    try:
+        with open(audio_file_path, "rb") as audio_file:
+            response = client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file,
+                language=language,
+                response_format="verbose_json"
+            )
+        return response
+    except Exception as e:
+        print(f"[ERROR] OpenAI transcription failed: {e}")
+        raise HTTPException(status_code=500, detail=f"OpenAI transcription failed: {str(e)}")
+
+# Function to transcribe using OpenAI Whisper HTTP API for word-level timestamps
+async def transcribe_with_openai_http(audio_file_path: str, language: str = "en"):
+    """Transcribe audio using OpenAI's Whisper API via HTTP for word-level timestamps"""
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    if not openai_api_key:
+        raise HTTPException(status_code=500, detail="OpenAI API key not configured")
+    
+    url = "https://api.openai.com/v1/audio/transcriptions"
+    headers = {
+        "Authorization": f"Bearer {openai_api_key}"
+    }
+    data = {
+        "model": "whisper-1",
+        "language": language,
+        "response_format": "verbose_json",
+        "timestamp_granularities[]": "word"
+    }
+    
+    # Get file size for timeout calculation
+    file_size = os.path.getsize(audio_file_path)
+    # Estimate timeout: 30 seconds base + 1 second per MB
+    timeout_seconds = 30 + (file_size / (1024 * 1024))
+    timeout_seconds = min(timeout_seconds, 300)  # Max 5 minutes
+    
+    print(f"[INFO] File size: {file_size / (1024*1024):.1f}MB, Timeout: {timeout_seconds:.0f}s")
+    
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            with open(audio_file_path, "rb") as audio_file:
+                files = {"file": (os.path.basename(audio_file_path), audio_file, "audio/mp3")}
+                async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+                    print(f"[INFO] Attempt {attempt + 1}/{max_retries}: Sending to OpenAI...")
+                    response = await client.post(url, headers=headers, data=data, files=files)
+                
+                if response.status_code == 200:
+                    print("[INFO] Transcription successful!")
+                    return response.json()
+                else:
+                    print(f"[ERROR] OpenAI HTTP API error (attempt {attempt + 1}): {response.status_code} - {response.text}")
+                    if attempt == max_retries - 1:
+                        raise HTTPException(status_code=500, detail=f"OpenAI HTTP API error: {response.text}")
+                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                    
+        except httpx.TimeoutException as e:
+            print(f"[WARNING] Timeout on attempt {attempt + 1}/{max_retries}: {e}")
+            if attempt == max_retries - 1:
+                raise HTTPException(status_code=500, detail=f"OpenAI transcription timed out after {max_retries} attempts. File may be too large or network too slow.")
+            await asyncio.sleep(2 ** attempt)  # Exponential backoff
+            
+        except Exception as e:
+            print(f"[ERROR] OpenAI HTTP transcription failed (attempt {attempt + 1}): {e}")
+            if attempt == max_retries - 1:
+                raise HTTPException(status_code=500, detail=f"OpenAI HTTP transcription failed: {str(e)}")
+            await asyncio.sleep(2 ** attempt)  # Exponential backoff
 
 # Update the SUBTITLE_PRESETS
 SUBTITLE_PRESETS = {
@@ -75,8 +161,8 @@ class CaptionRequest(BaseModel):
     language: str = "en"
     style: str = "classic"  # Default style
 
-@app.post("/generate-captions/")
-async def generate_captions(
+@app.post("/generate-subtitles/")
+async def generate_subtitles(
     video: UploadFile = File(...),
     language: str = "en",
     style: str = "classic"
@@ -130,9 +216,9 @@ async def generate_captions(
                 y = (video_clip.h - txt_clip.h) // 2
             return ("center", y)
 
-        # Transcribe the video using Whisper
+        # Transcribe the video using OpenAI
         print("[INFO] Transcribing video...")
-        result = model.transcribe(temp_video_path, language=language)
+        result = await transcribe_with_openai(temp_video_path, language)
         print("[INFO] Transcription complete.")
         
         # Create output video with captions
@@ -142,7 +228,7 @@ async def generate_captions(
         print("[INFO] Generating SRT subtitles...")
         # Compose SRT using srt library
         subs = []
-        for i, seg in enumerate(result["segments"]):
+        for i, seg in enumerate(result.segments):
             subs.append(
                 srt.Subtitle(
                     index=i+1,
@@ -163,7 +249,7 @@ async def generate_captions(
             words = text.split()
             return [" ".join(words[i:i+chunk_size]) for i in range(0, len(words), chunk_size)]
 
-        for seg in result["segments"]:
+        for seg in result.segments:
             text = seg["text"].strip()
             start = seg["start"]
             end = seg["end"]
@@ -355,9 +441,20 @@ async def generate_live_subtitles(
             temp_video_path = temp_video.name
         print(f"[INFO] Video saved to {temp_video_path}")
 
-        # Transcribe using Whisper
-        print("[INFO] Running transcription...")
-        result = model.transcribe(temp_video_path, language=language, word_timestamps=True)
+        # Transcribe using OpenAI HTTP API for word-level timestamps
+        print("[INFO] Running transcription (HTTP API, word-level)...")
+        result = await transcribe_with_openai_http(temp_video_path, language)
+        
+        # Debug: Print the structure of the response
+        print(f"[DEBUG] Response keys: {list(result.keys())}")
+        print(f"[DEBUG] Number of segments: {len(result.get('segments', []))}")
+        if result.get('segments'):
+            first_segment = result['segments'][0]
+            print(f"[DEBUG] First segment keys: {list(first_segment.keys())}")
+            if 'words' in first_segment:
+                print(f"[DEBUG] Number of words in first segment: {len(first_segment['words'])}")
+                if first_segment['words']:
+                    print(f"[DEBUG] First word structure: {first_segment['words'][0]}")
 
         # Load the video
         video_clip = VideoFileClip(temp_video_path)
@@ -432,37 +529,78 @@ async def generate_live_subtitles(
             img_array = np.array(rgb_img)
             return img_array
 
-        for segment in result.get("segments", []):
-            words = segment.get("words", [])
-            if not words:
-                continue
-            word_texts = [w["word"].upper() for w in words]
-            # Split words into chunks of 5-6
-            chunk_size = 6
-            chunks = [words[i:i+chunk_size] for i in range(0, len(words), chunk_size)]
-            for chunk in chunks:
-                chunk_texts = [w["word"].upper() for w in chunk]
-                line = " ".join(chunk_texts)
-                chunk_start = chunk[0]["start"]
-                chunk_end = chunk[-1]["end"]
-                # For each word in the chunk, create a clip with the chunk text, highlighting the current word
-                for i, w in enumerate(chunk):
-                    highlight_word = w["word"].upper()
-                    start = w["start"]
-                    end = w["end"]
-                    print(f"[DEBUG] Rendering stable subtitle: '{line}' | Highlight: '{highlight_word}' | Start: {start} | End: {end}")
-                    img_array = create_karaoke_image(line, highlight_word, video_width)
-                    if img_array is None:
-                        print("[ERROR] Failed to create subtitle image. Skipping this subtitle.")
-                        continue
-                    if img_array.size == 0 or len(img_array.shape) < 2:
-                        print("[ERROR] Empty or invalid image generated for subtitle. Skipping this subtitle.")
-                        continue
-                    h, w = img_array.shape[:2]
-                    txt_clip = VideoClip(lambda t, arr=img_array: arr, duration=end-start)
-                    txt_clip = txt_clip.set_position(("center", video_height - h - 150))
-                    txt_clip = txt_clip.set_start(start).set_end(end)
-                    karaoke_clips.append(txt_clip)
+        # Process segments and words
+        total_words = 0
+        segments = result.get("segments", [])
+        if segments:
+            for segment in segments:
+                words = segment.get("words", [])
+                if not words:
+                    continue
+                total_words += len(words)
+                print(f"[DEBUG] Processing segment with {len(words)} words")
+                # Split words into chunks of 5-6
+                chunk_size = 6
+                chunks = [words[i:i+chunk_size] for i in range(0, len(words), chunk_size)]
+                for chunk in chunks:
+                    chunk_texts = [w.get("word", "").upper() for w in chunk]
+                    line = " ".join(chunk_texts)
+                    # Get timing from the first and last word in chunk
+                    if chunk and len(chunk) > 0:
+                        chunk_start = chunk[0].get("start", 0)
+                        chunk_end = chunk[-1].get("end", chunk_start + 1)
+                        # For each word in the chunk, create a clip with the chunk text, highlighting the current word
+                        for i, w in enumerate(chunk):
+                            highlight_word = w.get("word", "").upper()
+                            start = w.get("start", chunk_start)
+                            end = w.get("end", start + 0.5)
+                            print(f"[DEBUG] Rendering karaoke subtitle: '{line}' | Highlight: '{highlight_word}' | Start: {start} | End: {end}")
+                            img_array = create_karaoke_image(line, highlight_word, video_width)
+                            if img_array is None:
+                                print("[ERROR] Failed to create subtitle image. Skipping this subtitle.")
+                                continue
+                            if img_array.size == 0 or len(img_array.shape) < 2:
+                                print("[ERROR] Empty or invalid image generated for subtitle. Skipping this subtitle.")
+                                continue
+                            h, w = img_array.shape[:2]
+                            txt_clip = VideoClip(lambda t, arr=img_array: arr, duration=end-start)
+                            txt_clip = txt_clip.set_position(("center", video_height - h - 150))
+                            txt_clip = txt_clip.set_start(start).set_end(end)
+                            karaoke_clips.append(txt_clip)
+        else:
+            # If no segments, use top-level words
+            words = result.get("words", [])
+            if words:
+                total_words = len(words)
+                print(f"[DEBUG] Processing top-level words: {total_words}")
+                chunk_size = 6
+                chunks = [words[i:i+chunk_size] for i in range(0, len(words), chunk_size)]
+                for chunk in chunks:
+                    chunk_texts = [w.get("word", "").upper() for w in chunk]
+                    line = " ".join(chunk_texts)
+                    if chunk and len(chunk) > 0:
+                        chunk_start = chunk[0].get("start", 0)
+                        chunk_end = chunk[-1].get("end", chunk_start + 1)
+                        for i, w in enumerate(chunk):
+                            highlight_word = w.get("word", "").upper()
+                            start = w.get("start", chunk_start)
+                            end = w.get("end", start + 0.5)
+                            print(f"[DEBUG] Rendering karaoke subtitle: '{line}' | Highlight: '{highlight_word}' | Start: {start} | End: {end}")
+                            img_array = create_karaoke_image(line, highlight_word, video_width)
+                            if img_array is None:
+                                print("[ERROR] Failed to create subtitle image. Skipping this subtitle.")
+                                continue
+                            if img_array.size == 0 or len(img_array.shape) < 2:
+                                print("[ERROR] Empty or invalid image generated for subtitle. Skipping this subtitle.")
+                                continue
+                            h, w = img_array.shape[:2]
+                            txt_clip = VideoClip(lambda t, arr=img_array: arr, duration=end-start)
+                            txt_clip = txt_clip.set_position(("center", video_height - h - 150))
+                            txt_clip = txt_clip.set_start(start).set_end(end)
+                            karaoke_clips.append(txt_clip)
+
+        print(f"[INFO] Total words processed: {total_words}")
+        print(f"[INFO] Total karaoke clips created: {len(karaoke_clips)}")
 
         if not karaoke_clips:
             raise HTTPException(status_code=500, detail="No valid karaoke clips were generated. Check font availability and input video.")
