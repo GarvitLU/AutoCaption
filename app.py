@@ -233,9 +233,9 @@ async def generate_subtitles(
             subs.append(
                 srt.Subtitle(
                     index=i+1,
-                    start=datetime.timedelta(seconds=seg["start"]),
-                    end=datetime.timedelta(seconds=seg["end"]),
-                    content=seg["text"].strip()
+                    start=datetime.timedelta(seconds=seg.start),
+                    end=datetime.timedelta(seconds=seg.end),
+                    content=seg.text.strip()
                 )
             )
         srt_content = srt.compose(subs)
@@ -251,9 +251,9 @@ async def generate_subtitles(
             return [" ".join(words[i:i+chunk_size]) for i in range(0, len(words), chunk_size)]
 
         for seg in result.segments:
-            text = seg["text"].strip()
-            start = seg["start"]
-            end = seg["end"]
+            text = seg.text.strip()
+            start = seg.start
+            end = seg.end
             if style in ["classic", "centered"]:
                 chunks = chunk_words(text, 6)
                 duration = (end - start) / max(1, len(chunks))
