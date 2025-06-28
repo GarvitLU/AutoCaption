@@ -1,6 +1,5 @@
 import os
 from moviepy.config import change_settings
-import openai
 
 # Configure ImageMagick with the correct path
 IMAGEMAGICK_BINARY = "/opt/homebrew/bin/magick"  # Confirmed correct path on your system
@@ -36,7 +35,7 @@ load_dotenv()
 
 app = FastAPI(title="Auto Caption Generator")
 
-# Initialize OpenAI client using the new style
+# Initialize OpenAI client
 openai_api_key = os.getenv("OPENAI_API_KEY")
 if not openai_api_key:
     print("[WARNING] OPENAI_API_KEY not found in environment variables. Please set it in your .env file or environment.")
@@ -233,9 +232,9 @@ async def generate_subtitles(
             subs.append(
                 srt.Subtitle(
                     index=i+1,
-                    start=datetime.timedelta(seconds=seg.start),
-                    end=datetime.timedelta(seconds=seg.end),
-                    content=seg.text.strip()
+                    start=datetime.timedelta(seconds=seg["start"]),
+                    end=datetime.timedelta(seconds=seg["end"]),
+                    content=seg["text"].strip()
                 )
             )
         srt_content = srt.compose(subs)
@@ -251,9 +250,9 @@ async def generate_subtitles(
             return [" ".join(words[i:i+chunk_size]) for i in range(0, len(words), chunk_size)]
 
         for seg in result.segments:
-            text = seg.text.strip()
-            start = seg.start
-            end = seg.end
+            text = seg["text"].strip()
+            start = seg["start"]
+            end = seg["end"]
             if style in ["classic", "centered"]:
                 chunks = chunk_words(text, 6)
                 duration = (end - start) / max(1, len(chunks))
