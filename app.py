@@ -1,5 +1,6 @@
 import os
 from moviepy.config import change_settings
+import openai
 
 # Configure ImageMagick with the correct path
 IMAGEMAGICK_BINARY = "/opt/homebrew/bin/magick"  # Confirmed correct path on your system
@@ -35,7 +36,7 @@ load_dotenv()
 
 app = FastAPI(title="Auto Caption Generator")
 
-# Initialize OpenAI client
+# Initialize OpenAI client using the new style
 openai_api_key = os.getenv("OPENAI_API_KEY")
 if not openai_api_key:
     print("[WARNING] OPENAI_API_KEY not found in environment variables. Please set it in your .env file or environment.")
