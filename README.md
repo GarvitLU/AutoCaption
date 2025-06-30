@@ -150,7 +150,7 @@ curl -X POST "http://localhost:8000/generate-live-subtitles/" \
 ## Supported Formats
 
 - **Input**: MP4 video files
-- **Output**: MP4 video files with embedded captions
+- **Output**: MP4 video files with embedded subtitles
 - **Languages**: All languages supported by OpenAI Whisper
 
 ## Notes
