@@ -12,6 +12,52 @@ An advanced video captioning API that automatically generates and embeds caption
 - **FastAPI-based REST API**: Modern, fast API with automatic documentation
 - **Video Processing**: Direct video file processing with embedded captions
 - **Temporary File Management**: Automatic cleanup of temporary files
+- **Cloud Deployment**: Hosted on Modal for production-ready API access
+
+## 🚀 Hosted APIs
+
+The Auto Caption Generator is now deployed on Modal and available as hosted APIs:
+
+### Production Endpoints
+
+**1. Generate Subtitles (Classic Style)**
+```
+https://garvitb--auto-caption-generator-generate-subtitles.modal.run
+```
+- Supports multiple subtitle styles (classic, modern, karaoke-style)
+- Chunked subtitles for better readability
+- Multiple language support
+
+**2. Generate Live Subtitles (Karaoke Style)**
+```
+https://garvitb--auto-caption-generator-generate-live-subtitles.modal.run
+```
+- Real-time karaoke-style subtitles
+- Word-by-word highlighting
+- Dynamic text rendering
+
+### Usage Examples
+
+**Generate Classic Subtitles:**
+```bash
+curl -X POST "https://garvitb--auto-caption-generator-generate-subtitles.modal.run" \
+     -H "accept: application/json" \
+     -H "Content-Type: multipart/form-data" \
+     -F "video=@your_video.mp4" \
+     -F "language=en" \
+     -F "style=classic"
+```
+
+**Generate Karaoke-Style Subtitles:**
+```bash
+curl -X POST "https://garvitb--auto-caption-generator-generate-live-subtitles.modal.run" \
+     -H "accept: application/json" \
+     -H "Content-Type: multipart/form-data" \
+     -F "video=@your_video.mp4" \
+     -F "language=en"
+```
+
+> **Note:** The hosted APIs require an OpenAI API key to be configured in Modal secrets.
 
 ## Setup
 
