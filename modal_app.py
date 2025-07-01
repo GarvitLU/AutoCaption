@@ -146,9 +146,52 @@ async def generate_subtitles(
         font_size = style_settings["fontsize"]
         min_font_size = 14
         
+        # Extract and compress audio for transcription
+        print("[INFO] Extracting audio for transcription...")
+        audio_path = temp_video_path.replace(".mp4", "_audio.wav")
+        
+        # Extract audio using ffmpeg with compression
+        import subprocess
+        
+        # First, extract audio as WAV
+        extract_cmd = [
+            "ffmpeg", "-i", temp_video_path, 
+            "-vn", "-acodec", "pcm_s16le", 
+            "-ar", "16000", "-ac", "1", 
+            "-y", audio_path
+        ]
+        subprocess.run(extract_cmd, check=True, capture_output=True)
+        
+        # Check file size and compress if needed
+        audio_size = os.path.getsize(audio_path)
+        max_size = 25 * 1024 * 1024  # 25MB in bytes
+        
+        if audio_size > max_size:
+            print(f"[INFO] Audio file too large ({audio_size / 1024 / 1024:.2f}MB), compressing...")
+            compressed_audio_path = temp_video_path.replace(".mp4", "_audio_compressed.wav")
+            
+            # Calculate target bitrate to fit within 25MB
+            # Estimate duration from video
+            duration = video_clip.duration
+            target_size = max_size * 0.95  # Leave 5% buffer
+            target_bitrate = int((target_size * 8) / duration)  # bits per second
+            
+            compress_cmd = [
+                "ffmpeg", "-i", audio_path,
+                "-acodec", "pcm_s16le",
+                "-ar", "16000", "-ac", "1",
+                "-b:a", str(target_bitrate),
+                "-y", compressed_audio_path
+            ]
+            subprocess.run(compress_cmd, check=True, capture_output=True)
+            
+            # Use compressed audio
+            audio_path = compressed_audio_path
+            print(f"[INFO] Audio compressed to {os.path.getsize(audio_path) / 1024 / 1024:.2f}MB")
+        
         # Transcribe audio
         print("[INFO] Starting transcription...")
-        with open(temp_video_path, "rb") as audio_file:
+        with open(audio_path, "rb") as audio_file:
             response = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=audio_file,
@@ -336,6 +379,20 @@ async def generate_subtitles(
         final_video.close()
         os.unlink(temp_video_path)
         
+        # Clean up audio files
+        if os.path.exists(audio_path):
+            os.unlink(audio_path)
+        compressed_audio_path = temp_video_path.replace(".mp4", "_audio_compressed.wav")
+        if os.path.exists(compressed_audio_path):
+            os.unlink(compressed_audio_path)
+        
+        # Clean up audio files
+        if os.path.exists(audio_path):
+            os.unlink(audio_path)
+        compressed_audio_path = temp_video_path.replace(".mp4", "_audio_compressed.wav")
+        if os.path.exists(compressed_audio_path):
+            os.unlink(compressed_audio_path)
+        
         print(f"[INFO] Video saved to {output_path}")
         
         # Return the video file
@@ -392,6 +449,49 @@ async def generate_live_subtitles(
         # Load the video
         video_clip = VideoFileClip(temp_video_path)
         
+        # Extract and compress audio for transcription
+        print("[INFO] Extracting audio for transcription...")
+        audio_path = temp_video_path.replace(".mp4", "_audio.wav")
+        
+        # Extract audio using ffmpeg with compression
+        import subprocess
+        
+        # First, extract audio as WAV
+        extract_cmd = [
+            "ffmpeg", "-i", temp_video_path, 
+            "-vn", "-acodec", "pcm_s16le", 
+            "-ar", "16000", "-ac", "1", 
+            "-y", audio_path
+        ]
+        subprocess.run(extract_cmd, check=True, capture_output=True)
+        
+        # Check file size and compress if needed
+        audio_size = os.path.getsize(audio_path)
+        max_size = 25 * 1024 * 1024  # 25MB in bytes
+        
+        if audio_size > max_size:
+            print(f"[INFO] Audio file too large ({audio_size / 1024 / 1024:.2f}MB), compressing...")
+            compressed_audio_path = temp_video_path.replace(".mp4", "_audio_compressed.wav")
+            
+            # Calculate target bitrate to fit within 25MB
+            # Estimate duration from video
+            duration = video_clip.duration
+            target_size = max_size * 0.95  # Leave 5% buffer
+            target_bitrate = int((target_size * 8) / duration)  # bits per second
+            
+            compress_cmd = [
+                "ffmpeg", "-i", audio_path,
+                "-acodec", "pcm_s16le",
+                "-ar", "16000", "-ac", "1",
+                "-b:a", str(target_bitrate),
+                "-y", compressed_audio_path
+            ]
+            subprocess.run(compress_cmd, check=True, capture_output=True)
+            
+            # Use compressed audio
+            audio_path = compressed_audio_path
+            print(f"[INFO] Audio compressed to {os.path.getsize(audio_path) / 1024 / 1024:.2f}MB")
+        
         # Transcribe with word-level timestamps
         print("[INFO] Starting transcription with word-level timestamps...")
         openai_api_key = os.environ["OPENAI_API_KEY"]
@@ -405,11 +505,11 @@ async def generate_live_subtitles(
             "timestamp_granularities[]": "word"
         }
         
-        file_size = os.path.getsize(temp_video_path)
+        file_size = os.path.getsize(audio_path)
         timeout_seconds = min(30 + (file_size / (1024 * 1024)), 300)
         
-        with open(temp_video_path, "rb") as audio_file:
-            files = {"file": (os.path.basename(temp_video_path), audio_file, "audio/mp3")}
+        with open(audio_path, "rb") as audio_file:
+            files = {"file": (os.path.basename(audio_path), audio_file, "audio/wav")}
             async with httpx.AsyncClient(timeout=timeout_seconds) as client:
                 response = await client.post(url, headers=headers, data=data, files=files)
         
