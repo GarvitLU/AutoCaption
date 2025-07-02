@@ -12,7 +12,7 @@ import numpy as np
 os.environ["MAGICK_HOME"] = "/opt/homebrew/opt/imagemagick"  # Update this path based on your ImageMagick installation
 os.environ["PATH"] = f"{os.environ['MAGICK_HOME']}/bin:" + os.environ.get("PATH", "")
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from openai import OpenAI
 import tempfile
 from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip
@@ -29,6 +29,8 @@ import csv
 from dotenv import load_dotenv
 import httpx
 import asyncio
+import boto3
+from botocore.exceptions import ClientError
 
 # Load environment variables
 load_dotenv()
@@ -43,80 +45,233 @@ if not openai_api_key:
 else:
     client = OpenAI(api_key=openai_api_key)
 
+# Initialize S3 client
+s3_client = None
+s3_bucket_name = os.getenv("S3_BUCKET_NAME")
+aws_access_key_id = os.getenv("AWS_ACCESS_KEY_ID")
+aws_secret_access_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+aws_region = os.getenv("AWS_REGION", "us-east-1")
+
+if s3_bucket_name and aws_access_key_id and aws_secret_access_key:
+    try:
+        s3_client = boto3.client(
+            's3',
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key,
+            region_name=aws_region
+        )
+        print(f"[INFO] S3 client initialized for bucket: {s3_bucket_name}")
+    except Exception as e:
+        print(f"[WARNING] Failed to initialize S3 client: {e}")
+        s3_client = None
+else:
+    print("[WARNING] S3 credentials not found. Please set S3_BUCKET_NAME, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY in your .env file.")
+
+def upload_to_s3(file_path: str, object_name: str = None) -> Optional[str]:
+    """Upload a file to S3 and return the public URL"""
+    if not s3_client:
+        raise HTTPException(status_code=500, detail="S3 not configured")
+    
+    if object_name is None:
+        object_name = os.path.basename(file_path)
+    
+    try:
+        s3_client.upload_file(file_path, s3_bucket_name, object_name)
+        
+        # Generate public URL
+        url = f"https://{s3_bucket_name}.s3.{aws_region}.amazonaws.com/{object_name}"
+        print(f"[INFO] File uploaded to S3: {url}")
+        return url
+    except ClientError as e:
+        print(f"[ERROR] S3 upload failed: {e}")
+        raise HTTPException(status_code=500, detail=f"S3 upload failed: {str(e)}")
+    except Exception as e:
+        print(f"[ERROR] Unexpected error during S3 upload: {e}")
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
 # Function to transcribe using OpenAI Whisper API
-async def transcribe_with_openai(audio_file_path: str, language: str = "en"):
-    """Transcribe audio using OpenAI's Whisper API"""
+async def transcribe_with_openai(video_file_path: str, language: str = "en"):
+    """Extract audio from video and transcribe using OpenAI's Whisper API"""
     if not client:
         raise HTTPException(status_code=500, detail="OpenAI API key not configured")
     
     try:
-        with open(audio_file_path, "rb") as audio_file:
+        # Extract audio from video
+        print("[INFO] Extracting audio from video...")
+        audio_path = video_file_path.replace(".mp4", "_audio.wav")
+        
+        # Extract audio using ffmpeg
+        extract_cmd = [
+            "ffmpeg", "-i", video_file_path, 
+            "-vn", "-acodec", "pcm_s16le", 
+            "-ar", "16000", "-ac", "1", 
+            "-y", audio_path
+        ]
+        subprocess.run(extract_cmd, check=True, capture_output=True)
+        
+        # Check file size and compress if needed
+        audio_size = os.path.getsize(audio_path)
+        max_size = 25 * 1024 * 1024  # 25MB in bytes
+        
+        if audio_size > max_size:
+            print(f"[INFO] Audio file too large ({audio_size / 1024 / 1024:.2f}MB), compressing...")
+            compressed_audio_path = video_file_path.replace(".mp4", "_audio_compressed.wav")
+            
+            # Calculate target bitrate to fit within 25MB
+            # Get video duration for bitrate calculation
+            probe_cmd = ["ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", video_file_path]
+            duration_result = subprocess.run(probe_cmd, capture_output=True, text=True, check=True)
+            duration = float(duration_result.stdout.strip())
+            
+            target_size = max_size * 0.95  # Leave 5% buffer
+            target_bitrate = int((target_size * 8) / duration)  # bits per second
+            
+            compress_cmd = [
+                "ffmpeg", "-i", audio_path,
+                "-acodec", "pcm_s16le",
+                "-ar", "16000", "-ac", "1",
+                "-b:a", str(target_bitrate),
+                "-y", compressed_audio_path
+            ]
+            subprocess.run(compress_cmd, check=True, capture_output=True)
+            
+            # Use compressed audio
+            audio_path = compressed_audio_path
+            print(f"[INFO] Audio compressed to {os.path.getsize(audio_path) / 1024 / 1024:.2f}MB")
+        
+        # Transcribe the audio
+        with open(audio_path, "rb") as audio_file:
             response = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=audio_file,
                 language=language,
                 response_format="verbose_json"
             )
+        
+        # Clean up audio files
+        if os.path.exists(audio_path):
+            os.unlink(audio_path)
+        compressed_audio_path = video_file_path.replace(".mp4", "_audio_compressed.wav")
+        if os.path.exists(compressed_audio_path):
+            os.unlink(compressed_audio_path)
+        
         return response
     except Exception as e:
         print(f"[ERROR] OpenAI transcription failed: {e}")
         raise HTTPException(status_code=500, detail=f"OpenAI transcription failed: {str(e)}")
 
 # Function to transcribe using OpenAI Whisper HTTP API for word-level timestamps
-async def transcribe_with_openai_http(audio_file_path: str, language: str = "en"):
-    """Transcribe audio using OpenAI's Whisper API via HTTP for word-level timestamps"""
+async def transcribe_with_openai_http(video_file_path: str, language: str = "en"):
+    """Extract audio from video and transcribe using OpenAI's Whisper API via HTTP for word-level timestamps"""
     openai_api_key = os.getenv("OPENAI_API_KEY")
     if not openai_api_key:
         raise HTTPException(status_code=500, detail="OpenAI API key not configured")
     
-    url = "https://api.openai.com/v1/audio/transcriptions"
-    headers = {
-        "Authorization": f"Bearer {openai_api_key}"
-    }
-    data = {
-        "model": "whisper-1",
-        "language": language,
-        "response_format": "verbose_json",
-        "timestamp_granularities[]": "word"
-    }
-    
-    # Get file size for timeout calculation
-    file_size = os.path.getsize(audio_file_path)
-    # Estimate timeout: 30 seconds base + 1 second per MB
-    timeout_seconds = 30 + (file_size / (1024 * 1024))
-    timeout_seconds = min(timeout_seconds, 300)  # Max 5 minutes
-    
-    print(f"[INFO] File size: {file_size / (1024*1024):.1f}MB, Timeout: {timeout_seconds:.0f}s")
-    
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            with open(audio_file_path, "rb") as audio_file:
-                files = {"file": (os.path.basename(audio_file_path), audio_file, "audio/mp3")}
-                async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-                    print(f"[INFO] Attempt {attempt + 1}/{max_retries}: Sending to OpenAI...")
-                    response = await client.post(url, headers=headers, data=data, files=files)
-                
-                if response.status_code == 200:
-                    print("[INFO] Transcription successful!")
-                    return response.json()
-                else:
-                    print(f"[ERROR] OpenAI HTTP API error (attempt {attempt + 1}): {response.status_code} - {response.text}")
-                    if attempt == max_retries - 1:
-                        raise HTTPException(status_code=500, detail=f"OpenAI HTTP API error: {response.text}")
-                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
-                    
-        except httpx.TimeoutException as e:
-            print(f"[WARNING] Timeout on attempt {attempt + 1}/{max_retries}: {e}")
-            if attempt == max_retries - 1:
-                raise HTTPException(status_code=500, detail=f"OpenAI transcription timed out after {max_retries} attempts. File may be too large or network too slow.")
-            await asyncio.sleep(2 ** attempt)  # Exponential backoff
+    try:
+        # Extract audio from video
+        print("[INFO] Extracting audio from video...")
+        audio_path = video_file_path.replace(".mp4", "_audio.wav")
+        
+        # Extract audio using ffmpeg
+        extract_cmd = [
+            "ffmpeg", "-i", video_file_path, 
+            "-vn", "-acodec", "pcm_s16le", 
+            "-ar", "16000", "-ac", "1", 
+            "-y", audio_path
+        ]
+        subprocess.run(extract_cmd, check=True, capture_output=True)
+        
+        # Check file size and compress if needed
+        audio_size = os.path.getsize(audio_path)
+        max_size = 25 * 1024 * 1024  # 25MB in bytes
+        
+        if audio_size > max_size:
+            print(f"[INFO] Audio file too large ({audio_size / 1024 / 1024:.2f}MB), compressing...")
+            compressed_audio_path = video_file_path.replace(".mp4", "_audio_compressed.wav")
             
-        except Exception as e:
-            print(f"[ERROR] OpenAI HTTP transcription failed (attempt {attempt + 1}): {e}")
-            if attempt == max_retries - 1:
-                raise HTTPException(status_code=500, detail=f"OpenAI HTTP transcription failed: {str(e)}")
-            await asyncio.sleep(2 ** attempt)  # Exponential backoff
+            # Calculate target bitrate to fit within 25MB
+            # Get video duration for bitrate calculation
+            probe_cmd = ["ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", video_file_path]
+            duration_result = subprocess.run(probe_cmd, capture_output=True, text=True, check=True)
+            duration = float(duration_result.stdout.strip())
+            
+            target_size = max_size * 0.95  # Leave 5% buffer
+            target_bitrate = int((target_size * 8) / duration)  # bits per second
+            
+            compress_cmd = [
+                "ffmpeg", "-i", audio_path,
+                "-acodec", "pcm_s16le",
+                "-ar", "16000", "-ac", "1",
+                "-b:a", str(target_bitrate),
+                "-y", compressed_audio_path
+            ]
+            subprocess.run(compress_cmd, check=True, capture_output=True)
+            
+            # Use compressed audio
+            audio_path = compressed_audio_path
+            print(f"[INFO] Audio compressed to {os.path.getsize(audio_path) / 1024 / 1024:.2f}MB")
+        
+        url = "https://api.openai.com/v1/audio/transcriptions"
+        headers = {
+            "Authorization": f"Bearer {openai_api_key}"
+        }
+        data = {
+            "model": "whisper-1",
+            "language": language,
+            "response_format": "verbose_json",
+            "timestamp_granularities[]": "word"
+        }
+        
+        # Get file size for timeout calculation
+        file_size = os.path.getsize(audio_path)
+        # Estimate timeout: 30 seconds base + 1 second per MB
+        timeout_seconds = 30 + (file_size / (1024 * 1024))
+        timeout_seconds = min(timeout_seconds, 300)  # Max 5 minutes
+        
+        print(f"[INFO] File size: {file_size / (1024*1024):.1f}MB, Timeout: {timeout_seconds:.0f}s")
+        
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                with open(audio_path, "rb") as audio_file:
+                    files = {"file": (os.path.basename(audio_path), audio_file, "audio/wav")}
+                    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+                        print(f"[INFO] Attempt {attempt + 1}/{max_retries}: Sending to OpenAI...")
+                        response = await client.post(url, headers=headers, data=data, files=files)
+                    
+                    if response.status_code == 200:
+                        print("[INFO] Transcription successful!")
+                        result = response.json()
+                        
+                        # Clean up audio files
+                        if os.path.exists(audio_path):
+                            os.unlink(audio_path)
+                        compressed_audio_path = video_file_path.replace(".mp4", "_audio_compressed.wav")
+                        if os.path.exists(compressed_audio_path):
+                            os.unlink(compressed_audio_path)
+                        
+                        return result
+                    else:
+                        print(f"[ERROR] OpenAI HTTP API error (attempt {attempt + 1}): {response.status_code} - {response.text}")
+                        if attempt == max_retries - 1:
+                            raise HTTPException(status_code=500, detail=f"OpenAI HTTP API error: {response.text}")
+                        await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                        
+            except httpx.TimeoutException as e:
+                print(f"[WARNING] Timeout on attempt {attempt + 1}/{max_retries}: {e}")
+                if attempt == max_retries - 1:
+                    raise HTTPException(status_code=500, detail=f"OpenAI transcription timed out after {max_retries} attempts. File may be too large or network too slow.")
+                await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                
+            except Exception as e:
+                print(f"[ERROR] OpenAI HTTP transcription failed (attempt {attempt + 1}): {e}")
+                if attempt == max_retries - 1:
+                    raise HTTPException(status_code=500, detail=f"OpenAI HTTP transcription failed: {str(e)}")
+                await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                
+    except Exception as e:
+        print(f"[ERROR] Audio extraction or transcription failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Audio extraction or transcription failed: {str(e)}")
 
 # Update the SUBTITLE_PRESETS
 SUBTITLE_PRESETS = {
@@ -301,13 +456,39 @@ async def generate_subtitles(
         os.unlink(temp_video_path)
         print("[INFO] Temporary video file deleted.")
         
-        # Return the processed video
-        print("[INFO] Returning FileResponse.")
-        return FileResponse(
-            output_path,
-            media_type="video/mp4",
-            filename="captioned_video.mp4"
-        )
+        # Upload to S3 and return JSON response
+        if s3_client:
+            try:
+                print("[INFO] Uploading video to S3...")
+                output_filename = f"captioned_{uuid.uuid4().hex[:8]}.mp4"
+                video_url = upload_to_s3(output_path, output_filename)
+                
+                # Clean up local file
+                os.unlink(output_path)
+                
+                return JSONResponse(content={
+                    "success": True,
+                    "message": "Video processed successfully",
+                    "video_url": video_url,
+                    "filename": output_filename,
+                    "style": style,
+                    "language": language
+                })
+            except Exception as e:
+                print(f"[ERROR] S3 upload failed: {e}")
+                # Fall back to file response if S3 fails
+                return FileResponse(
+                    output_path,
+                    media_type="video/mp4",
+                    filename="captioned_video.mp4"
+                )
+        else:
+            # If S3 is not configured, return file response
+            return FileResponse(
+                output_path,
+                media_type="video/mp4",
+                filename="captioned_video.mp4"
+            )
     except Exception as e:
         tb = traceback.format_exc()
         print(f"[ERROR] Exception occurred: {e}\nTraceback:\n{tb}")
@@ -615,11 +796,39 @@ async def generate_live_subtitles(
         os.unlink(temp_video_path)
         print("[INFO] Temporary video file deleted.")
 
-        return FileResponse(
-            output_path,
-            media_type="video/mp4",
-            filename="modern_karaoke.mp4"
-        )
+        # Upload to S3 and return JSON response
+        if s3_client:
+            try:
+                print("[INFO] Uploading karaoke video to S3...")
+                output_filename = f"karaoke_{uuid.uuid4().hex[:8]}.mp4"
+                video_url = upload_to_s3(output_path, output_filename)
+                
+                # Clean up local file
+                os.unlink(output_path)
+                
+                return JSONResponse(content={
+                    "success": True,
+                    "message": "Karaoke video processed successfully",
+                    "video_url": video_url,
+                    "filename": output_filename,
+                    "language": language,
+                    "type": "karaoke"
+                })
+            except Exception as e:
+                print(f"[ERROR] S3 upload failed: {e}")
+                # Fall back to file response if S3 fails
+                return FileResponse(
+                    output_path,
+                    media_type="video/mp4",
+                    filename="modern_karaoke.mp4"
+                )
+        else:
+            # If S3 is not configured, return file response
+            return FileResponse(
+                output_path,
+                media_type="video/mp4",
+                filename="modern_karaoke.mp4"
+            )
     except Exception as e:
         tb = traceback.format_exc()
         print(f"[ERROR] Exception occurred: {e}\nTraceback:\n{tb}")

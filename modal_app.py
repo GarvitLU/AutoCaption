@@ -35,7 +35,8 @@ image = modal.Image.debian_slim(python_version="3.11").apt_install(
     "fastapi[standard]==0.104.1",
     "python-multipart==0.0.6",
     "moviepy==1.0.3",
-    "httpx==0.23.3"
+    "httpx==0.23.3",
+    "boto3==1.34.0"
 )
 
 # Create a volume for persistent storage
@@ -47,7 +48,10 @@ volume = modal.Volume.from_name("caption-generator-volume", create_if_missing=Tr
     timeout=600,  # 10 minutes timeout
     memory=4096,  # 4GB RAM
     cpu=2.0,      # 2 CPU cores
-    secrets=[modal.Secret.from_name("openai-api-key")]
+    secrets=[
+        modal.Secret.from_name("openai-api-key"),
+        modal.Secret.from_name("s3-credentials")
+    ]
 )
 @modal.fastapi_endpoint(method="POST")
 async def generate_subtitles(
@@ -77,6 +81,55 @@ async def generate_subtitles(
     
     # Initialize OpenAI client
     client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    
+    # Initialize S3 client
+    import boto3
+    from botocore.exceptions import ClientError
+    from fastapi.responses import JSONResponse
+    from typing import Optional
+    
+    s3_client = None
+    s3_bucket_name = os.getenv("S3_BUCKET_NAME")
+    aws_access_key_id = os.getenv("AWS_ACCESS_KEY_ID")
+    aws_secret_access_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+    aws_region = os.getenv("AWS_REGION", "us-east-1")
+
+    if s3_bucket_name and aws_access_key_id and aws_secret_access_key:
+        try:
+            s3_client = boto3.client(
+                's3',
+                aws_access_key_id=aws_access_key_id,
+                aws_secret_access_key=aws_secret_access_key,
+                region_name=aws_region
+            )
+            print(f"[INFO] S3 client initialized for bucket: {s3_bucket_name}")
+        except Exception as e:
+            print(f"[WARNING] Failed to initialize S3 client: {e}")
+            s3_client = None
+    else:
+        print("[WARNING] S3 credentials not found. Videos will be returned as file downloads.")
+
+    def upload_to_s3(file_path: str, object_name: str = None) -> Optional[str]:
+        """Upload a file to S3 and return the public URL"""
+        if not s3_client:
+            raise HTTPException(status_code=500, detail="S3 not configured")
+        
+        if object_name is None:
+            object_name = os.path.basename(file_path)
+        
+        try:
+            s3_client.upload_file(file_path, s3_bucket_name, object_name)
+            
+            # Generate public URL
+            url = f"https://{s3_bucket_name}.s3.{aws_region}.amazonaws.com/{object_name}"
+            print(f"[INFO] File uploaded to S3: {url}")
+            return url
+        except ClientError as e:
+            print(f"[ERROR] S3 upload failed: {e}")
+            raise HTTPException(status_code=500, detail=f"S3 upload failed: {str(e)}")
+        except Exception as e:
+            print(f"[ERROR] Unexpected error during S3 upload: {e}")
+            raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
     
     # Subtitle presets
     SUBTITLE_PRESETS = {
@@ -395,12 +448,39 @@ async def generate_subtitles(
         
         print(f"[INFO] Video saved to {output_path}")
         
-        # Return the video file
-        return FileResponse(
-            path=output_path,
-            filename=output_filename,
-            media_type="video/mp4"
-        )
+        # Upload to S3 and return JSON response
+        if s3_client:
+            try:
+                print("[INFO] Uploading video to S3...")
+                s3_filename = f"captioned_{uuid.uuid4().hex[:8]}.mp4"
+                video_url = upload_to_s3(output_path, s3_filename)
+                
+                # Clean up local file
+                os.unlink(output_path)
+                
+                return JSONResponse(content={
+                    "success": True,
+                    "message": "Video processed successfully",
+                    "video_url": video_url,
+                    "filename": s3_filename,
+                    "style": style,
+                    "language": language
+                })
+            except Exception as e:
+                print(f"[ERROR] S3 upload failed: {e}")
+                # Fall back to file response if S3 fails
+                return FileResponse(
+                    path=output_path,
+                    filename=output_filename,
+                    media_type="video/mp4"
+                )
+        else:
+            # If S3 is not configured, return file response
+            return FileResponse(
+                path=output_path,
+                filename=output_filename,
+                media_type="video/mp4"
+            )
         
     except Exception as e:
         print(f"[ERROR] {str(e)}")
@@ -414,7 +494,10 @@ async def generate_subtitles(
     timeout=600,
     memory=4096,
     cpu=2.0,
-    secrets=[modal.Secret.from_name("openai-api-key")]
+    secrets=[
+        modal.Secret.from_name("openai-api-key"),
+        modal.Secret.from_name("s3-credentials")
+    ]
 )
 @modal.fastapi_endpoint(method="POST")
 async def generate_live_subtitles(
@@ -437,6 +520,55 @@ async def generate_live_subtitles(
     # Set up environment
     os.environ["MAGICK_HOME"] = "/usr"
     os.environ["PATH"] = f"{os.environ['MAGICK_HOME']}/bin:" + os.environ.get("PATH", "")
+    
+    # Initialize S3 client
+    import boto3
+    from botocore.exceptions import ClientError
+    from fastapi.responses import JSONResponse
+    from typing import Optional
+    
+    s3_client = None
+    s3_bucket_name = os.getenv("S3_BUCKET_NAME")
+    aws_access_key_id = os.getenv("AWS_ACCESS_KEY_ID")
+    aws_secret_access_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+    aws_region = os.getenv("AWS_REGION", "us-east-1")
+
+    if s3_bucket_name and aws_access_key_id and aws_secret_access_key:
+        try:
+            s3_client = boto3.client(
+                's3',
+                aws_access_key_id=aws_access_key_id,
+                aws_secret_access_key=aws_secret_access_key,
+                region_name=aws_region
+            )
+            print(f"[INFO] S3 client initialized for bucket: {s3_bucket_name}")
+        except Exception as e:
+            print(f"[WARNING] Failed to initialize S3 client: {e}")
+            s3_client = None
+    else:
+        print("[WARNING] S3 credentials not found. Videos will be returned as file downloads.")
+
+    def upload_to_s3(file_path: str, object_name: str = None) -> Optional[str]:
+        """Upload a file to S3 and return the public URL"""
+        if not s3_client:
+            raise HTTPException(status_code=500, detail="S3 not configured")
+        
+        if object_name is None:
+            object_name = os.path.basename(file_path)
+        
+        try:
+            s3_client.upload_file(file_path, s3_bucket_name, object_name)
+            
+            # Generate public URL
+            url = f"https://{s3_bucket_name}.s3.{aws_region}.amazonaws.com/{object_name}"
+            print(f"[INFO] File uploaded to S3: {url}")
+            return url
+        except ClientError as e:
+            print(f"[ERROR] S3 upload failed: {e}")
+            raise HTTPException(status_code=500, detail=f"S3 upload failed: {str(e)}")
+        except Exception as e:
+            print(f"[ERROR] Unexpected error during S3 upload: {e}")
+            raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
     
     try:
         print("[INFO] Starting live subtitle generation...")
@@ -526,9 +658,9 @@ async def generate_live_subtitles(
         subtitle_clips = []
         
         def create_karaoke_clip(chunk_text, highlight_word, video_width, duration):
-            """Create a PIL karaoke subtitle image (all-caps, bold, white bg, black text, blue highlight, centered, with padding, fixed 48px font, and up to 2 lines)"""
+            """Create a PIL karaoke subtitle image (all-caps, bold, white bg, black text, blue highlight, centered, with padding, fixed 28px font, and up to 2 lines)"""
             font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-            font_size = 48
+            font_size = 28
             padding = 50
             max_bar_width = int(video_width * 0.95)
             chunk_text = chunk_text.strip().upper()
@@ -637,12 +769,39 @@ async def generate_live_subtitles(
         final_video.close()
         os.unlink(temp_video_path)
         
-        # Return the video file
-        return FileResponse(
-            path=output_path,
-            filename=output_filename,
-            media_type="video/mp4"
-        )
+        # Upload to S3 and return JSON response
+        if s3_client:
+            try:
+                print("[INFO] Uploading karaoke video to S3...")
+                s3_filename = f"karaoke_{uuid.uuid4().hex[:8]}.mp4"
+                video_url = upload_to_s3(output_path, s3_filename)
+                
+                # Clean up local file
+                os.unlink(output_path)
+                
+                return JSONResponse(content={
+                    "success": True,
+                    "message": "Karaoke video processed successfully",
+                    "video_url": video_url,
+                    "filename": s3_filename,
+                    "language": language,
+                    "type": "karaoke"
+                })
+            except Exception as e:
+                print(f"[ERROR] S3 upload failed: {e}")
+                # Fall back to file response if S3 fails
+                return FileResponse(
+                    path=output_path,
+                    filename=output_filename,
+                    media_type="video/mp4"
+                )
+        else:
+            # If S3 is not configured, return file response
+            return FileResponse(
+                path=output_path,
+                filename=output_filename,
+                media_type="video/mp4"
+            )
         
     except Exception as e:
         print(f"[ERROR] {str(e)}")

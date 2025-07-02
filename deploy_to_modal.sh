@@ -35,6 +35,18 @@ fi
 
 echo "✅ OpenAI API key secret found"
 
+# Check if S3 credentials secret exists
+echo "🔑 Checking S3 credentials secret..."
+if ! modal secret list | grep -q "s3-credentials"; then
+    echo "❌ S3 credentials secret not found."
+    echo "Please create it with:"
+    echo "   modal secret create s3-credentials S3_BUCKET_NAME=your_bucket_name AWS_ACCESS_KEY_ID=your_access_key AWS_SECRET_ACCESS_KEY=your_secret_key AWS_REGION=us-east-1"
+    echo "Then run this script again."
+    exit 1
+fi
+
+echo "✅ S3 credentials secret found"
+
 # Deploy the application
 echo "📦 Deploying to Modal..."
 python modal_deploy.py

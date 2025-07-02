@@ -67,6 +67,93 @@ curl -X POST "https://garvitb--auto-caption-generator-generate-live-subtitles.mo
 - ImageMagick (for text rendering)
 - FFmpeg (for video processing)
 - OpenAI API key
+- AWS S3 bucket (optional, for cloud storage)
+
+## Modal Deployment with S3
+
+The app can be deployed to Modal with S3 upload functionality for cloud storage.
+
+### Prerequisites for Modal Deployment
+
+1. **Modal CLI**: Install and authenticate with Modal
+   ```bash
+   pip install modal
+   modal token new
+   ```
+
+2. **OpenAI API Key Secret**: Create a Modal secret for your OpenAI API key
+   ```bash
+   modal secret create openai-api-key OPENAI_API_KEY=your_actual_api_key_here
+   ```
+
+3. **S3 Credentials Secret**: Create a Modal secret for your S3 credentials
+   ```bash
+   modal secret create s3-credentials \
+     S3_BUCKET_NAME=your_bucket_name \
+     AWS_ACCESS_KEY_ID=your_access_key \
+     AWS_SECRET_ACCESS_KEY=your_secret_key \
+     AWS_REGION=us-east-1
+   ```
+
+   Or use the provided setup script:
+   ```bash
+   ./setup_s3_credentials.sh
+   ```
+
+### Deploy to Modal
+
+1. **Automatic Deployment**: Use the provided deployment script
+   ```bash
+   ./deploy_to_modal.sh
+   ```
+
+2. **Manual Deployment**: Deploy directly with Modal
+   ```bash
+   python modal_deploy.py
+   ```
+
+### Modal Endpoints with S3
+
+When deployed to Modal with S3 credentials configured, the endpoints will:
+
+- **Upload processed videos to S3** automatically
+- **Return JSON responses** with S3 URLs instead of file downloads
+- **Clean up local files** after successful upload
+- **Fall back to file downloads** if S3 upload fails
+
+**Example Response from Modal with S3:**
+```json
+{
+  "success": true,
+  "message": "Video processed successfully",
+  "video_url": "https://your-bucket.s3.us-east-1.amazonaws.com/captioned_abc123.mp4",
+  "filename": "captioned_abc123.mp4",
+  "style": "classic",
+  "language": "en"
+}
+```
+
+### S3 Bucket Requirements
+
+- **Public Read Access**: The bucket should allow public read access for the uploaded videos
+- **CORS Configuration**: Configure CORS if accessing from web browsers
+- **IAM Permissions**: The IAM user should have `s3:PutObject` and `s3:GetObject` permissions
+
+**Example S3 Bucket Policy for Public Read:**
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "PublicReadGetObject",
+            "Effect": "Allow",
+            "Principal": "*",
+            "Action": "s3:GetObject",
+            "Resource": "arn:aws:s3:::your-bucket-name/*"
+        }
+    ]
+}
+```
 
 ### Installation
 
@@ -91,7 +178,18 @@ pip install -r requirements.txt
    OPENAI_API_KEY=your_actual_api_key_here
    ```
 
-4. Run the API server:
+4. (Optional) Set up S3 for cloud storage:
+   - Create an S3 bucket in your AWS account
+   - Create an IAM user with S3 access permissions
+   - Add S3 credentials to your `.env` file:
+   ```
+   S3_BUCKET_NAME=your_s3_bucket_name
+   AWS_ACCESS_KEY_ID=your_aws_access_key_id
+   AWS_SECRET_ACCESS_KEY=your_aws_secret_access_key
+   AWS_REGION=us-east-1
+   ```
+
+5. Run the API server:
 ```bash
 python app.py
 ```
@@ -114,6 +212,22 @@ The server will start at `http://localhost:8000`
 - `classic`: Bottom, white text, Arial, thin black border, no background, chunked to 5-6 words
 - `centered`: Center, bold white text, large font, semi-transparent black background, no border, chunked to 5-6 words
 
+**Response Format:**
+- If S3 is configured: Returns JSON with video URL
+- If S3 is not configured: Returns the video file directly
+
+**JSON Response (when S3 is configured):**
+```json
+{
+  "success": true,
+  "message": "Video processed successfully",
+  "video_url": "https://your-bucket.s3.us-east-1.amazonaws.com/captioned_abc123.mp4",
+  "filename": "captioned_abc123.mp4",
+  "style": "classic",
+  "language": "en"
+}
+```
+
 > **Note:** This endpoint uses segment-level timing (not word-level karaoke highlighting).
 
 ### 2. Generate Live Karaoke-Style Subtitles
@@ -130,6 +244,22 @@ Creates karaoke-style subtitles with:
 - Bold Arial font
 - Word-by-word synchronization (word-level timing)
 - Automatic text wrapping
+
+**Response Format:**
+- If S3 is configured: Returns JSON with video URL
+- If S3 is not configured: Returns the video file directly
+
+**JSON Response (when S3 is configured):**
+```json
+{
+  "success": true,
+  "message": "Karaoke video processed successfully",
+  "video_url": "https://your-bucket.s3.us-east-1.amazonaws.com/karaoke_abc123.mp4",
+  "filename": "karaoke_abc123.mp4",
+  "language": "en",
+  "type": "karaoke"
+}
+```
 
 ### 3. API Documentation
 
