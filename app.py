@@ -609,10 +609,12 @@ def create_text_clip(text, style_settings, highlighted_word=None, video_width=19
 @app.post("/generate-live-subtitles/")
 async def generate_live_subtitles(
     video: UploadFile = File(...),
-    language: str = Form("en")
+    language: str = Form("en"),
+    font: str = Form("arial")
 ):
     """
     Generate a video with live karaoke-style subtitles (solid white background, black text, blue highlight) using MoviePy/PIL.
+    font: 'arial', 'georgia', 'montserrat', 'verdana', 'comic_sans' (default: 'arial')
     """
     try:
         # Save uploaded video to temp file
@@ -641,21 +643,40 @@ async def generate_live_subtitles(
         video_clip = VideoFileClip(temp_video_path)
         video_width, video_height = video_clip.size
         
-        # Use full path to Arial Bold font (guaranteed on macOS)
-        font_path = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
-        fontsize = 48  # Decreased font size to prevent going off-screen
+        # Font selection logic
+        FONT_DIR = os.path.join(os.path.dirname(__file__), "fonts")
+        font_map = {
+            "arial": os.path.join(FONT_DIR, "Arial-Bold.ttf"),
+            "georgia": os.path.join(FONT_DIR, "Georgia-Bold.ttf"),
+            "montserrat": os.path.join(FONT_DIR, "Montserrat-Bold.ttf"),
+            "verdana": os.path.join(FONT_DIR, "Verdana-Bold.ttf"),
+            "comic_sans": os.path.join(FONT_DIR, "ComicSansMS-Bold.ttf"),
+            "times_new_roman": os.path.join(FONT_DIR, "TimesNewRoman-Bold.ttf"),
+            "courier_new": os.path.join(FONT_DIR, "CourierNew-Bold.ttf"),
+            "trebuchet_ms": os.path.join(FONT_DIR, "TrebuchetMS-Bold.ttf"),
+            "tahoma": os.path.join(FONT_DIR, "Tahoma-Bold.ttf"),
+            "circular_std": os.path.join(FONT_DIR, "CircularStd-Bold.ttf"),
+        }
+        font = font.lower()
+        font_path = font_map.get(font, font_map["arial"])
+        if font == "circular_std":
+            fontsize = 150  # Much larger size for CircularStd to match visual size
+        else:
+            fontsize = 48  # Default size for other fonts
         color = "black"
         highlight_color = "blue"
         padding = 30  # Increased padding for better visibility
         karaoke_clips = []
 
         def create_karaoke_image(text, highlighted_word, video_width):
-            """Create a PIL image for karaoke subtitles, all uppercase, with background sized to wrapped text width + padding, and bold text."""
+            print(f"[FONT DEBUG] Requested font: {font}, Path: {font_path}")
             try:
-                font = ImageFont.truetype(font_path, fontsize)
+                font_obj = ImageFont.truetype(font_path, fontsize)
+                print(f"[FONT DEBUG] Successfully loaded font: {font_path}, fontsize: {fontsize}")
             except Exception as e:
                 print(f"[ERROR] Could not load font {font_path}: {e}")
-                return None
+                font_obj = ImageFont.load_default()
+                print(f"[FONT DEBUG] Fallback to default font.")
             text = text.strip().upper()
             highlighted_word = highlighted_word.strip().upper()
             # Word wrapping: restrict to 90% of video width
@@ -665,7 +686,7 @@ async def generate_live_subtitles(
             current_line = ""
             for word in words:
                 test_line = (current_line + " " + word).strip()
-                bbox = font.getbbox(test_line)
+                bbox = font_obj.getbbox(test_line)
                 w = bbox[2] - bbox[0]
                 if w > max_text_width and current_line:
                     lines.append(current_line)
@@ -678,7 +699,7 @@ async def generate_live_subtitles(
             line_heights = []
             line_widths = []
             for line in lines:
-                bbox = font.getbbox(line)
+                bbox = font_obj.getbbox(line)
                 line_widths.append(bbox[2] - bbox[0])
                 line_heights.append(bbox[3] - bbox[1])
             total_height = sum(line_heights) + (len(lines) - 1) * 10
@@ -690,19 +711,19 @@ async def generate_live_subtitles(
             y = padding
             for idx, line in enumerate(lines):
                 line_words = line.split()
-                line_bbox = font.getbbox(line)
+                line_bbox = font_obj.getbbox(line)
                 line_width = line_bbox[2] - line_bbox[0]
                 x = (img_width - line_width) // 2
                 current_x = x
                 for word in line_words:
                     clean_word = word.strip('.,!?;:')
                     clean_highlighted = highlighted_word.strip('.,!?;:')
-                    word_bbox = font.getbbox(word + " ")
+                    word_bbox = font_obj.getbbox(word + " ")
                     word_width = word_bbox[2] - word_bbox[0]
                     word_color = highlight_color if (word == highlighted_word or clean_word == clean_highlighted) else color
                     # Draw bold text (draw twice with 1px offset)
-                    draw.text((current_x, y), word, font=font, fill=word_color)
-                    draw.text((current_x+1, y), word, font=font, fill=word_color)
+                    draw.text((current_x, y), word, font=font_obj, fill=word_color)
+                    draw.text((current_x+1, y), word, font=font_obj, fill=word_color)
                     current_x += word_width
                 y += line_heights[idx] + 10
             rgb_img = Image.new('RGB', img.size, (255, 255, 255))

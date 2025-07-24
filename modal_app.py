@@ -502,9 +502,10 @@ async def generate_subtitles(
 @modal.fastapi_endpoint(method="POST")
 async def generate_live_subtitles(
     video: UploadFile = File(...),
-    language: str = "en"
+    language: str = "en",
+    font: str = "arial"
 ):
-    """Generate live karaoke-style subtitles with word-level timing"""
+    """Generate live karaoke-style subtitles with word-level timing. Font: 'arial', 'georgia', 'montserrat', 'verdana', 'comic_sans' (default: 'arial')"""
     import os
     import tempfile
     from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip, VideoClip
@@ -657,25 +658,43 @@ async def generate_live_subtitles(
         # Create karaoke-style subtitle clips
         subtitle_clips = []
         
+        import os
+        FONT_DIR = os.path.join(os.path.dirname(__file__), "fonts")
+        font_map = {
+            "arial": os.path.join(FONT_DIR, "Arial-Bold.ttf"),
+            "georgia": os.path.join(FONT_DIR, "Georgia-Bold.ttf"),
+            "montserrat": os.path.join(FONT_DIR, "Montserrat-Bold.ttf"),
+            "verdana": os.path.join(FONT_DIR, "Verdana-Bold.ttf"),
+            "comic_sans": os.path.join(FONT_DIR, "ComicSansMS-Bold.ttf"),
+            "times_new_roman": os.path.join(FONT_DIR, "TimesNewRoman-Bold.ttf"),
+            "courier_new": os.path.join(FONT_DIR, "CourierNew-Bold.ttf"),
+            "trebuchet_ms": os.path.join(FONT_DIR, "TrebuchetMS-Bold.ttf"),
+            "tahoma": os.path.join(FONT_DIR, "Tahoma-Bold.ttf"),
+        }
+
         def create_karaoke_clip(chunk_text, highlight_word, video_width, duration):
             """Create a PIL karaoke subtitle image (all-caps, bold, white bg, black text, blue highlight, centered, with padding, fixed 28px font, and up to 2 lines)"""
-            font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+            font_path = font_map.get(font.lower(), font_map["arial"])
             font_size = 28
             padding = 50
             max_bar_width = int(video_width * 0.95)
             chunk_text = chunk_text.strip().upper()
             highlight_word = highlight_word.strip().upper()
+            print(f"[FONT DEBUG] Requested font: {font}, Path: {font_path}")
             try:
-                font = ImageFont.truetype(font_path, font_size)
-            except Exception:
-                font = ImageFont.load_default()
+                font_obj = ImageFont.truetype(font_path, font_size)
+                print(f"[FONT DEBUG] Successfully loaded font: {font_path}")
+            except Exception as e:
+                print(f"[ERROR] Could not load font {font_path}: {e}")
+                font_obj = ImageFont.load_default()
+                print(f"[FONT DEBUG] Fallback to default font.")
             # Word wrapping: split into lines so each line fits max_bar_width - 2*padding
             words = chunk_text.split()
             lines = []
             current_line = ""
             for word in words:
                 test_line = (current_line + " " + word).strip()
-                bbox = font.getbbox(test_line)
+                bbox = font_obj.getbbox(test_line)
                 w = bbox[2] - bbox[0]
                 if w > (max_bar_width - 2 * padding) and current_line:
                     lines.append(current_line)
@@ -688,10 +707,10 @@ async def generate_live_subtitles(
             if len(lines) > 2:
                 lines = [" ".join(words[:len(words)//2]), " ".join(words[len(words)//2:])]
             # Calculate bar size
-            line_heights = [font.getbbox(line)[3] - font.getbbox(line)[1] for line in lines]
+            line_heights = [font_obj.getbbox(line)[3] - font_obj.getbbox(line)[1] for line in lines]
             text_block_height = sum(line_heights) + (len(lines) - 1) * 10
             bar_height = text_block_height + 2 * padding
-            max_line_width = max([font.getbbox(line)[2] - font.getbbox(line)[0] for line in lines])
+            max_line_width = max([font_obj.getbbox(line)[2] - font_obj.getbbox(line)[0] for line in lines])
             img_width = max(max_bar_width, max_line_width + 2 * padding)
             img = Image.new('RGBA', (img_width, bar_height), (255, 255, 255, 255))
             draw = ImageDraw.Draw(img)
@@ -699,19 +718,19 @@ async def generate_live_subtitles(
             y = padding
             for idx, line in enumerate(lines):
                 line_words = line.split()
-                line_bbox = font.getbbox(line)
+                line_bbox = font_obj.getbbox(line)
                 line_width = line_bbox[2] - line_bbox[0]
                 x = (img_width - line_width) // 2
                 current_x = x
                 for word in line_words:
                     clean_word = word.strip('.,!?;:')
                     clean_highlighted = highlight_word.strip('.,!?;:')
-                    word_bbox = font.getbbox(word + " ")
+                    word_bbox = font_obj.getbbox(word + " ")
                     word_width = word_bbox[2] - word_bbox[0]
                     word_color = (0, 165, 255) if (word == highlight_word or clean_word == clean_highlighted) else (0, 0, 0)
                     # Draw bold text (draw twice with 1px offset)
-                    draw.text((current_x, y), word, font=font, fill=word_color)
-                    draw.text((current_x+1, y), word, font=font, fill=word_color)
+                    draw.text((current_x, y), word, font=font_obj, fill=word_color)
+                    draw.text((current_x+1, y), word, font=font_obj, fill=word_color)
                     current_x += word_width
                 y += line_heights[idx] + 10
             # Center the bar horizontally in the video

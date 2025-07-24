@@ -340,3 +340,29 @@ curl -X POST "http://localhost:8000/generate-live-subtitles/" \
 - The YouTube style is large, bottom-aligned, and backgrounded for maximum readability
 - Requires an active internet connection for OpenAI API calls
 - API usage is subject to OpenAI's rate limits and pricing 
+
+## Font Options for Live Subtitles
+
+The `/generate-live-subtitles/` endpoint supports the following fonts. Use the corresponding value for the `font` parameter:
+
+| Font Name           | Parameter Value      |
+|---------------------|---------------------|
+| Arial               | arial               |
+| Georgia             | georgia             |
+| Montserrat          | montserrat          |
+| Verdana             | verdana             |
+| Comic Sans MS       | comic_sans          |
+| Times New Roman     | times_new_roman     |
+| Courier New         | courier_new         |
+| Trebuchet MS        | trebuchet_ms        |
+| Tahoma              | tahoma              |
+| Circular Std        | circular_std        |
+
+**Example usage:**
+- For Montserrat: `montserrat`
+- For Times New Roman: `times_new_roman`
+- For Comic Sans: `comic_sans`
+
+**To add more fonts:**
+1. Place the `.ttf` file in the `fonts/` directory.
+2. Update the `font_map` dictionary in `app.py` to include your new font and its parameter value. 

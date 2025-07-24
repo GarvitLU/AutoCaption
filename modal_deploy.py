@@ -266,9 +266,10 @@ async def generate_subtitles(
 @modal.fastapi_endpoint(method="POST")
 async def generate_live_subtitles(
     video: UploadFile = File(...),
-    language: str = Form("en")
+    language: str = Form("en"),
+    font: str = Form("arial")
 ):
-    """Generate live karaoke-style subtitles with word-level timing"""
+    """Generate live karaoke-style subtitles with word-level timing. Font: 'arial', 'georgia', 'montserrat', 'verdana', 'comic_sans' (default: 'arial')"""
     import os
     import tempfile
     from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip
@@ -282,6 +283,19 @@ async def generate_live_subtitles(
     # Set up environment
     os.environ["MAGICK_HOME"] = "/usr"
     os.environ["PATH"] = f"{os.environ['MAGICK_HOME']}/bin:" + os.environ.get("PATH", "")
+    
+    FONT_DIR = os.path.join(os.path.dirname(__file__), "fonts")
+    font_map = {
+        "arial": os.path.join(FONT_DIR, "Arial-Bold.ttf"),
+        "georgia": os.path.join(FONT_DIR, "Georgia-Bold.ttf"),
+        "montserrat": os.path.join(FONT_DIR, "Montserrat-Bold.ttf"),
+        "verdana": os.path.join(FONT_DIR, "Verdana-Bold.ttf"),
+        "comic_sans": os.path.join(FONT_DIR, "ComicSansMS-Bold.ttf"),
+        "times_new_roman": os.path.join(FONT_DIR, "TimesNewRoman-Bold.ttf"),
+        "courier_new": os.path.join(FONT_DIR, "CourierNew-Bold.ttf"),
+        "trebuchet_ms": os.path.join(FONT_DIR, "TrebuchetMS-Bold.ttf"),
+        "tahoma": os.path.join(FONT_DIR, "Tahoma-Bold.ttf"),
+    }
     
     try:
         print("[INFO] Starting live subtitle generation...")
@@ -329,40 +343,33 @@ async def generate_live_subtitles(
         subtitle_clips = []
         
         def create_karaoke_image(text, highlighted_word, video_width):
-            """Create karaoke-style image with highlighted word"""
+            """Create karaoke-style image with highlighted word and selected font"""
+            font_path = font_map.get(font.lower(), font_map["arial"])
+            print(f"[FONT DEBUG] Requested font: {font}, Path: {font_path}")
+            try:
+                font_obj = ImageFont.truetype(font_path, 48)
+                print(f"[FONT DEBUG] Successfully loaded font: {font_path}")
+            except Exception as e:
+                print(f"[ERROR] Could not load font {font_path}: {e}")
+                font_obj = ImageFont.load_default()
+                print(f"[FONT DEBUG] Fallback to default font.")
             img = Image.new('RGBA', (video_width, 150), (255, 255, 255, 255))
             draw = ImageDraw.Draw(img)
-            
-            try:
-                font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 48)
-            except:
-                font = ImageFont.load_default()
-            
             # Split text into words
             words = text.split()
             current_x = 50
             line_height = 60
-            
             for i, word in enumerate(words):
                 if word == highlighted_word:
-                    # Highlighted word in blue
                     color = "#00A5FF"
                 else:
-                    # Regular word in black
                     color = "black"
-                
-                # Draw word
-                draw.text((current_x, 45), word, fill=color, font=font)
-                
-                # Move to next word position
-                bbox = draw.textbbox((current_x, 45), word, font=font)
+                draw.text((current_x, 45), word, fill=color, font=font_obj)
+                bbox = draw.textbbox((current_x, 45), word, font=font_obj)
                 current_x = bbox[2] + 20
-                
-                # Wrap to next line if needed
                 if current_x > video_width - 100:
                     current_x = 50
                     line_height += 60
-            
             return np.array(img)
         
         # Group words into sentences and create clips
