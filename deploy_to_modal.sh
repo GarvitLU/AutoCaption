@@ -1,63 +1,42 @@
 #!/bin/bash
 
-# Modal Auto Caption Generator Deployment Script
-echo "🚀 Modal Auto Caption Generator - Deployment Script"
-echo "=================================================="
+echo "🚀 Deploying Auto Caption Generator to Modal..."
 
-# Check if Modal CLI is installed
+# Check if modal is installed
 if ! command -v modal &> /dev/null; then
-    echo "❌ Modal CLI not found. Installing..."
-    pip install modal
-else
-    echo "✅ Modal CLI found"
-fi
-
-# Check if user is authenticated
-echo "🔐 Checking Modal authentication..."
-if ! modal token list &> /dev/null; then
-    echo "❌ Not authenticated with Modal. Please run:"
-    echo "   modal token new"
-    echo "   Then run this script again."
+    echo "❌ Modal CLI not found. Please install it first:"
+    echo "pip install modal"
     exit 1
 fi
 
-echo "✅ Modal authentication confirmed"
-
-# Check if OpenAI API key secret exists
-echo "🔑 Checking OpenAI API key secret..."
-if ! modal secret list | grep -q "openai-api-key"; then
-    echo "❌ OpenAI API key secret not found."
-    echo "Please create it with:"
-    echo "   modal secret create openai-api-key OPENAI_API_KEY=your_actual_api_key_here"
-    echo "Then run this script again."
+# Check if we're in the right directory
+if [ ! -f "modal_app.py" ]; then
+    echo "❌ modal_app.py not found. Please run this script from the project directory."
     exit 1
 fi
 
-echo "✅ OpenAI API key secret found"
+echo "📦 Deploying with new styling features..."
+echo "✅ 12 fonts supported"
+echo "✅ Advanced styling options (bg_color, font_color, highlight_color)"
+echo "✅ Custom font sizes and weights"
+echo "✅ Color parsing (hex and named colors)"
 
-# Check if S3 credentials secret exists
-echo "🔑 Checking S3 credentials secret..."
-if ! modal secret list | grep -q "s3-credentials"; then
-    echo "❌ S3 credentials secret not found."
-    echo "Please create it with:"
-    echo "   modal secret create s3-credentials S3_BUCKET_NAME=your_bucket_name AWS_ACCESS_KEY_ID=your_access_key AWS_SECRET_ACCESS_KEY=your_secret_key AWS_REGION=us-east-1"
-    echo "Then run this script again."
-    exit 1
-fi
+# Deploy to Modal
+modal deploy modal_app.py
 
-echo "✅ S3 credentials secret found"
-
-# Deploy the application
-echo "📦 Deploying to Modal..."
-python modal_deploy.py
-
+echo "🎉 Deployment complete!"
 echo ""
-echo "🎉 Deployment completed!"
+echo "📋 Available endpoints:"
+echo "  - POST /generate-subtitles/ (classic subtitle generation)"
+echo "  - POST /generate-live-subtitles/ (karaoke-style with advanced styling)"
+echo "  - GET /health_check (health check)"
 echo ""
-echo "Your endpoints are now available at:"
-echo "- Health Check: https://auto-caption-generator--health-check.modal.run"
-echo "- Generate Subtitles: https://auto-caption-generator--generate-subtitles.modal.run"
-echo "- Generate Live Subtitles: https://auto-caption-generator--generate-live-subtitles.modal.run"
+echo "🎨 New styling features:"
+echo "  - bg_color: Background color (hex or named)"
+echo "  - font_color: Text color (hex or named)"
+echo "  - highlight_color: Highlight color (hex or named)"
+echo "  - font_family: Font selection (12 fonts available)"
+echo "  - font_weight: Font weight (bold/regular)"
+echo "  - font_size: Font size in pixels"
 echo ""
-echo "To test your deployment, run:"
-echo "   python test_modal_deployment.py https://auto-caption-generator--health-check.modal.run" 
+echo "📚 Available fonts: arial, georgia, montserrat, verdana, comic_sans, times_new_roman, courier_new, trebuchet_ms, tahoma, roboto, open_sans, raleway" 

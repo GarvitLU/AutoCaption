@@ -610,11 +610,17 @@ def create_text_clip(text, style_settings, highlighted_word=None, video_width=19
 async def generate_live_subtitles(
     video: UploadFile = File(...),
     language: str = Form("en"),
-    font: str = Form("arial")
+    bg_color: Optional[str] = Form(None),
+    font_color: Optional[str] = Form(None),
+    highlight_color: Optional[str] = Form(None),
+    font_fill_style: Optional[str] = Form(None),
+    font_family: Optional[str] = Form("arial"),
+    font_weight: Optional[str] = Form("bold"),
+    font_size: Optional[str] = Form(None)
 ):
     """
-    Generate a video with live karaoke-style subtitles (solid white background, black text, blue highlight) using MoviePy/PIL.
-    font: 'arial', 'georgia', 'montserrat', 'verdana', 'comic_sans' (default: 'arial')
+    Generate a video with live karaoke-style subtitles with advanced styling options.
+    Supports 30+ fonts and custom colors, backgrounds, and styling.
     """
     try:
         # Save uploaded video to temp file
@@ -643,9 +649,27 @@ async def generate_live_subtitles(
         video_clip = VideoFileClip(temp_video_path)
         video_width, video_height = video_clip.size
         
+        # Parse style options
+        fill_style = None
+        if font_fill_style:
+            try:
+                fill_style = json.loads(font_fill_style)
+            except json.JSONDecodeError:
+                print("[WARNING] Invalid font_fill_style JSON, using defaults")
+
+        # Set default values
+        bg_color = bg_color or "#ffffff"
+        font_color = font_color or "#000000"
+        highlight_color = highlight_color or "#00A5FF"
+        padding = 30  # Increased padding for better visibility
+        
+        # Debug color values
+        print(f"[DEBUG] Colors - bg: {bg_color}, font: {font_color}, highlight: {highlight_color}")
+        
         # Font selection logic
         FONT_DIR = os.path.join(os.path.dirname(__file__), "fonts")
         font_map = {
+            # Available fonts (only these are actually present in fonts/ directory)
             "arial": os.path.join(FONT_DIR, "Arial-Bold.ttf"),
             "georgia": os.path.join(FONT_DIR, "Georgia-Bold.ttf"),
             "montserrat": os.path.join(FONT_DIR, "Montserrat-Bold.ttf"),
@@ -655,21 +679,38 @@ async def generate_live_subtitles(
             "courier_new": os.path.join(FONT_DIR, "CourierNew-Bold.ttf"),
             "trebuchet_ms": os.path.join(FONT_DIR, "TrebuchetMS-Bold.ttf"),
             "tahoma": os.path.join(FONT_DIR, "Tahoma-Bold.ttf"),
-            "circular_std": os.path.join(FONT_DIR, "CircularStd-Bold.ttf"),
+            
+            # Additional popular fonts (successfully downloaded)
+            "roboto": os.path.join(FONT_DIR, "Roboto-Bold.ttf"),
+            "open_sans": os.path.join(FONT_DIR, "OpenSans-Bold.ttf"),
+            "raleway": os.path.join(FONT_DIR, "Raleway-Bold.ttf"),
         }
-        font = font.lower()
-        font_path = font_map.get(font, font_map["arial"])
-        if font == "circular_std":
-            fontsize = 150  # Much larger size for CircularStd to match visual size
+        
+        # Font selection logic
+        selected_font = font_family or "arial"
+        selected_weight = font_weight or "bold"
+        font_key = f"{selected_font.lower()}_{selected_weight.lower()}"
+
+        # Try to find the font with weight, fallback to just font name, then arial
+        font_path = font_map.get(font_key, font_map.get(selected_font.lower(), font_map["arial"]))
+
+        # Font size processing
+        if font_size:
+            try:
+                fontsize = int(font_size.replace("px", ""))
+            except ValueError:
+                fontsize = 48
         else:
-            fontsize = 48  # Default size for other fonts
-        color = "black"
-        highlight_color = "blue"
-        padding = 30  # Increased padding for better visibility
+            fontsize = 48
+
+        # Special handling for circular_std
+        if selected_font.lower() == "circular_std":
+            fontsize = 150
+            
         karaoke_clips = []
 
         def create_karaoke_image(text, highlighted_word, video_width):
-            print(f"[FONT DEBUG] Requested font: {font}, Path: {font_path}")
+            print(f"[FONT DEBUG] Requested font: {selected_font}, Weight: {selected_weight}, Path: {font_path}")
             try:
                 font_obj = ImageFont.truetype(font_path, fontsize)
                 print(f"[FONT DEBUG] Successfully loaded font: {font_path}, fontsize: {fontsize}")
@@ -677,13 +718,16 @@ async def generate_live_subtitles(
                 print(f"[ERROR] Could not load font {font_path}: {e}")
                 font_obj = ImageFont.load_default()
                 print(f"[FONT DEBUG] Fallback to default font.")
+            
             text = text.strip().upper()
             highlighted_word = highlighted_word.strip().upper()
+            
             # Word wrapping: restrict to 90% of video width
             max_text_width = int(video_width * 0.9)
             words = text.split()
             lines = []
             current_line = ""
+            
             for word in words:
                 test_line = (current_line + " " + word).strip()
                 bbox = font_obj.getbbox(test_line)
@@ -695,6 +739,7 @@ async def generate_live_subtitles(
                     current_line = test_line
             if current_line:
                 lines.append(current_line)
+            
             # Calculate total text block size
             line_heights = []
             line_widths = []
@@ -704,10 +749,44 @@ async def generate_live_subtitles(
                 line_heights.append(bbox[3] - bbox[1])
             total_height = sum(line_heights) + (len(lines) - 1) * 10
             max_width = max(line_widths)
+            
             img_width = max_width + 2 * padding
             img_height = total_height + 2 * padding
-            img = Image.new('RGBA', (img_width, img_height), (255, 255, 255, 255))
+            
+            # Helper function to convert color to RGB
+            def color_to_rgb(color_str):
+                """Convert color string to RGB tuple"""
+                try:
+                    # Handle hex colors
+                    if color_str.startswith("#") and len(color_str) == 7:
+                        return tuple(int(color_str[i:i+2], 16) for i in (1, 3, 5))
+                    # Handle named colors
+                    elif color_str.lower() in ['black', 'white', 'red', 'green', 'blue', 'yellow', 'cyan', 'magenta']:
+                        color_map = {
+                            'black': (0, 0, 0),
+                            'white': (255, 255, 255),
+                            'red': (255, 0, 0),
+                            'green': (0, 255, 0),
+                            'blue': (0, 0, 255),
+                            'yellow': (255, 255, 0),
+                            'cyan': (0, 255, 255),
+                            'magenta': (255, 0, 255)
+                        }
+                        return color_map[color_str.lower()]
+                    else:
+                        print(f"[WARNING] Invalid color format: {color_str}, using black")
+                        return (0, 0, 0)
+                except (ValueError, IndexError) as e:
+                    print(f"[WARNING] Color parsing error for '{color_str}': {e}, using black")
+                    return (0, 0, 0)
+            
+            # Create background with custom bg_color
+            bg_rgb = color_to_rgb(bg_color)
+            print(f"[DEBUG] Background RGB: {bg_rgb}")
+                
+            img = Image.new('RGBA', (img_width, img_height), (*bg_rgb, 255))
             draw = ImageDraw.Draw(img)
+            
             y = padding
             for idx, line in enumerate(lines):
                 line_words = line.split()
@@ -715,18 +794,34 @@ async def generate_live_subtitles(
                 line_width = line_bbox[2] - line_bbox[0]
                 x = (img_width - line_width) // 2
                 current_x = x
+                
                 for word in line_words:
                     clean_word = word.strip('.,!?;:')
                     clean_highlighted = highlighted_word.strip('.,!?;:')
                     word_bbox = font_obj.getbbox(word + " ")
                     word_width = word_bbox[2] - word_bbox[0]
-                    word_color = highlight_color if (word == highlighted_word or clean_word == clean_highlighted) else color
+                    
+                    # Determine word color
+                    if word == highlighted_word or clean_word == clean_highlighted:
+                        word_color = highlight_color
+                    else:
+                        word_color = font_color
+                    
+                    # Handle font_fill_style if provided
+                    if fill_style and fill_style.get("type") == "solid":
+                        word_color = fill_style.get("value", word_color)
+                    
+                    # Convert color to RGB
+                    word_rgb = color_to_rgb(word_color)
+                    
                     # Draw bold text (draw twice with 1px offset)
-                    draw.text((current_x, y), word, font=font_obj, fill=word_color)
-                    draw.text((current_x+1, y), word, font=font_obj, fill=word_color)
+                    draw.text((current_x, y), word, font=font_obj, fill=word_rgb)
+                    draw.text((current_x+1, y), word, font=font_obj, fill=word_rgb)
                     current_x += word_width
+                
                 y += line_heights[idx] + 10
-            rgb_img = Image.new('RGB', img.size, (255, 255, 255))
+            
+            rgb_img = Image.new('RGB', img.size, bg_rgb)
             rgb_img.paste(img, mask=img.split()[-1])
             img_array = np.array(rgb_img)
             return img_array
@@ -833,7 +928,15 @@ async def generate_live_subtitles(
                     "video_url": video_url,
                     "filename": output_filename,
                     "language": language,
-                    "type": "karaoke"
+                    "type": "karaoke",
+                    "style_used": {
+                        "font_family": selected_font,
+                        "font_weight": selected_weight,
+                        "font_size": fontsize,
+                        "bg_color": bg_color,
+                        "font_color": font_color,
+                        "highlight_color": highlight_color
+                    }
                 })
             except Exception as e:
                 print(f"[ERROR] S3 upload failed: {e}")
