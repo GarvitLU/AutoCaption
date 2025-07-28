@@ -21,15 +21,7 @@ The Auto Caption Generator is deployed on Modal and available as hosted APIs:
 
 ### Production Endpoints
 
-**1. Generate Subtitles (Classic Style)**
-```
-https://lu-labs--auto-caption-generator-v2-generate-subtitles.modal.run
-```
-- Supports multiple subtitle styles (classic, modern, karaoke-style)
-- Chunked subtitles for better readability
-- Multiple language support
-
-**2. Generate Live Subtitles (Karaoke Style)**
+**Generate Live Subtitles (Karaoke Style)**
 ```
 https://lu-labs--auto-caption-generator-v2-generate-live-subtitles.modal.run
 ```
@@ -39,16 +31,6 @@ https://lu-labs--auto-caption-generator-v2-generate-live-subtitles.modal.run
 - Dynamic text rendering with custom styling
 
 ### Usage Examples
-
-**Generate Classic Subtitles:**
-```bash
-curl -X POST "https://lu-labs--auto-caption-generator-v2-generate-subtitles.modal.run" \
-     -H "accept: application/json" \
-     -H "Content-Type: multipart/form-data" \
-     -F "video=@your_video.mp4" \
-     -F "language=en" \
-     -F "style=classic"
-```
 
 **Generate Karaoke-Style Subtitles with Custom Styling:**
 ```bash
@@ -164,82 +146,64 @@ When deployed to Modal with S3 credentials configured, the endpoints will:
 }
 ```
 
-### Installation
+## 🚀 Quick Start
 
-1. Install ImageMagick (macOS):
-```bash
-brew install imagemagick
-```
+### Local Development
 
-2. Install Python dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-3. Set up your OpenAI API key:
-   - Get your API key from [OpenAI Platform](https://platform.openai.com/api-keys)
-   - Create a `.env` file in the project root:
+1. **Install Dependencies:**
    ```bash
-   cp .env.example .env
-   ```
-   - Edit `.env` and add your OpenAI API key:
-   ```
-   OPENAI_API_KEY=your_actual_api_key_here
+   pip install -r requirements.txt
    ```
 
-4. (Optional) Set up S3 for cloud storage:
-   - Create an S3 bucket in your AWS account
-   - Create an IAM user with S3 access permissions
-   - Add S3 credentials to your `.env` file:
-   ```
+2. **Set up Environment Variables:**
+   Create a `.env` file with:
+   ```env
+   OPENAI_API_KEY=your_openai_api_key_here
    S3_BUCKET_NAME=your_s3_bucket_name
-   AWS_ACCESS_KEY_ID=your_aws_access_key_id
-   AWS_SECRET_ACCESS_KEY=your_aws_secret_access_key
+   AWS_ACCESS_KEY_ID=your_aws_access_key
+   AWS_SECRET_ACCESS_KEY=your_aws_secret_key
    AWS_REGION=us-east-1
    ```
 
-5. Run the API server:
+3. **Run the Application:**
+   ```bash
+   python app.py
+   ```
+
+4. **Access the API:**
+   - API Documentation: http://localhost:8000/docs
+   - Health Check: http://localhost:8000/
+   - Generate Live Subtitles: http://localhost:8000/generate-live-subtitles/
+
+### Local Usage Examples
+
+**Generate Live Karaoke-Style Subtitles:**
 ```bash
-python app.py
+curl -X POST "http://localhost:8000/generate-live-subtitles/" \
+     -H "accept: application/json" \
+     -H "Content-Type: multipart/form-data" \
+     -F "video=@your_video.mp4" \
+     -F "language=en"
 ```
 
-The server will start at `http://localhost:8000`
+**Generate Live Karaoke-Style Subtitles with Custom Styling:**
+```bash
+curl -X POST "http://localhost:8000/generate-live-subtitles/" \
+     -H "accept: application/json" \
+     -H "Content-Type: multipart/form-data" \
+     -F "video=@your_video.mp4" \
+     -F "language=en" \
+     -F "font_family=roboto" \
+     -F "font_weight=bold" \
+     -F "font_size=32" \
+     -F "bg_color=#f2f2f2" \
+     -F "font_color=#000000" \
+     -F "highlight_color=#ffcc00"
+```
 
 ## API Endpoints
 
-### 1. Generate Subtitles
-
-**Endpoint:** `POST /generate-subtitles/`
-
-**Parameters:**
-- `video`: Video file (MP4 format)
-- `language`: Language code (default: "en")
-- `style`: Caption style (default: "classic")
-
-**Available Styles:**
-- `youtube`: Bottom, white text, large font, semi-transparent black background, no border
-- `classic`: Bottom, white text, Arial, thin black border, no background, chunked to 5-6 words
-- `centered`: Center, bold white text, large font, semi-transparent black background, no border, chunked to 5-6 words
-
-**Response Format:**
-- If S3 is configured: Returns JSON with video URL
-- If S3 is not configured: Returns the video file directly
-
-**JSON Response (when S3 is configured):**
-```json
-{
-  "success": true,
-  "message": "Video processed successfully",
-  "video_url": "https://your-bucket.s3.us-east-1.amazonaws.com/captioned_abc123.mp4",
-  "filename": "captioned_abc123.mp4",
-  "style": "classic",
-  "language": "en"
-}
-```
-
-> **Note:** This endpoint uses segment-level timing (not word-level karaoke highlighting).
-
-### 2. Generate Live Karaoke-Style Subtitles
+### Generate Live Karaoke-Style Subtitles
 
 **Endpoint:** `POST /generate-live-subtitles/`
 
@@ -284,7 +248,7 @@ Creates karaoke-style subtitles with:
 }
 ```
 
-### 3. API Documentation
+### API Documentation
 
 **Endpoint:** `GET /docs`
 
@@ -358,39 +322,6 @@ curl -X POST "https://lu-labs--auto-caption-generator-v2-generate-live-subtitles
 
 ## Usage Examples
 
-### Basic Subtitle Generation
-
-```bash
-curl -X POST "http://localhost:8000/generate-subtitles/" \
-     -H "accept: application/json" \
-     -H "Content-Type: multipart/form-data" \
-     -F "video=@your_video.mp4" \
-     -F "language=en" \
-     -F "style=classic"
-```
-
-### Centered Chunked Subtitles
-
-```bash
-curl -X POST "http://localhost:8000/generate-subtitles/" \
-     -H "accept: application/json" \
-     -H "Content-Type: multipart/form-data" \
-     -F "video=@your_video.mp4" \
-     -F "language=en" \
-     -F "style=centered"
-```
-
-### YouTube-Style Subtitles
-
-```bash
-curl -X POST "http://localhost:8000/generate-subtitles/" \
-     -H "accept: application/json" \
-     -H "Content-Type: multipart/form-data" \
-     -F "video=@your_video.mp4" \
-     -F "language=en" \
-     -F "style=youtube"
-```
-
 ### Live Karaoke-Style Subtitles (Word-level)
 
 ```bash
@@ -399,6 +330,22 @@ curl -X POST "http://localhost:8000/generate-live-subtitles/" \
      -H "Content-Type: multipart/form-data" \
      -F "video=@your_video.mp4" \
      -F "language=en"
+```
+
+### Live Karaoke-Style Subtitles with Custom Styling
+
+```bash
+curl -X POST "http://localhost:8000/generate-live-subtitles/" \
+     -H "accept: application/json" \
+     -H "Content-Type: multipart/form-data" \
+     -F "video=@your_video.mp4" \
+     -F "language=en" \
+     -F "font_family=roboto" \
+     -F "font_weight=bold" \
+     -F "font_size=32" \
+     -F "bg_color=#f2f2f2" \
+     -F "font_color=#000000" \
+     -F "highlight_color=#ffcc00"
 ```
 
 ## Technical Details
